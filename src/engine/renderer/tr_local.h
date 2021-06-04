@@ -2811,6 +2811,7 @@ static inline void halfToFloat( const f16vec4_t in, vec4_t out )
 	extern cvar_t *r_glDebugProfile;
 	extern cvar_t *r_glDebugMode;
 	extern cvar_t *r_glAllowSoftware;
+	extern cvar_t *r_glExtendedValidation;
 
 	extern cvar_t *r_ignore; // used for debugging anything
 	extern cvar_t *r_verbose; // used for verbose debug spew
