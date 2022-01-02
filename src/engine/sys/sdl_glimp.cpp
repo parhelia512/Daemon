@@ -471,18 +471,18 @@ static bool GLimp_DetectAvailableModes()
 	return true;
 }
 
-enum glProfile {
-	undefinedProfile = 0,
-	compatibilityProfile = 1,
-	coreProfile = 2,
+enum class glProfile {
+	UNDEFINED = 0,
+	COMPATIBILITY = 1,
+	CORE = 2,
 };
 
-typedef struct {
+struct glConfiguration {
 	int major;
 	int minor;
-	int profile;
+	glProfile profile;
 	int colorBits;
-} glConfiguration;
+};
 
 static bool operator!=(const glConfiguration& c1, const glConfiguration& c2) {
 	return c1.major != c2.major
@@ -491,9 +491,10 @@ static bool operator!=(const glConfiguration& c1, const glConfiguration& c2) {
 		|| c1.colorBits != c2.colorBits;
 }
 
-static const char* GLimp_getProfileName( int profile )
+static const char* GLimp_getProfileName( glProfile profile )
 {
-	return profile == coreProfile ? "core" : "compatibility";
+	ASSERT(profile != glProfile::UNDEFINED);
+	return profile == glProfile::CORE ? "core" : "compatibility";
 }
 
 static void GLimp_SetAttributes( const glConfiguration &configuration )
@@ -513,7 +514,7 @@ static void GLimp_SetAttributes( const glConfiguration &configuration )
 	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, configuration.major );
 	SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, configuration.minor );
 
-	if ( configuration.profile == coreProfile )
+	if ( configuration.profile == glProfile::CORE )
 	{
 		SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE );
 	}
@@ -817,27 +818,31 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 	For information about core, compatibility and forward profiles,
 	see https://www.khronos.org/opengl/wiki/OpenGL_Context */
 
-	const int glSupportArray[][4] = {
-		// Version major, Version minor, OpenGL profile, Tested by default
-		{ 4, 6, coreProfile, false },
-		{ 4, 5, coreProfile, false },
-		{ 4, 4, coreProfile, false },
-		{ 4, 3, coreProfile, false },
-		{ 4, 2, coreProfile, false },
-		{ 4, 1, coreProfile, false },
-		{ 4, 0, coreProfile, false },
-		{ 3, 3, coreProfile, false },
-		{ 3, 2, coreProfile, true },
-		{ 3, 1, compatibilityProfile, false },
-		{ 3, 0, compatibilityProfile, false },
-		{ 2, 1, compatibilityProfile, true },
-		{ 2, 0, compatibilityProfile, true },
-		{ 1, 5, compatibilityProfile, true },
-		{ 1, 4, compatibilityProfile, true },
-		{ 1, 3, compatibilityProfile, true },
-		{ 1, 2, compatibilityProfile, true },
-		{ 1, 1, compatibilityProfile, true },
-		{ 1, 0, compatibilityProfile, true },
+	struct {
+		int major;
+		int minor;
+		glProfile profile;
+		bool testByDefault;
+	} glSupportArray[] {
+		{ 4, 6, glProfile::CORE, false },
+		{ 4, 5, glProfile::CORE, false },
+		{ 4, 4, glProfile::CORE, false },
+		{ 4, 3, glProfile::CORE, false },
+		{ 4, 2, glProfile::CORE, false },
+		{ 4, 1, glProfile::CORE, false },
+		{ 4, 0, glProfile::CORE, false },
+		{ 3, 3, glProfile::CORE, false },
+		{ 3, 2, glProfile::CORE, true },
+		{ 3, 1, glProfile::COMPATIBILITY, false },
+		{ 3, 0, glProfile::COMPATIBILITY, false },
+		{ 2, 1, glProfile::COMPATIBILITY, true },
+		{ 2, 0, glProfile::COMPATIBILITY, true },
+		{ 1, 5, glProfile::COMPATIBILITY, true },
+		{ 1, 4, glProfile::COMPATIBILITY, true },
+		{ 1, 3, glProfile::COMPATIBILITY, true },
+		{ 1, 2, glProfile::COMPATIBILITY, true },
+		{ 1, 1, glProfile::COMPATIBILITY, true },
+		{ 1, 0, glProfile::COMPATIBILITY, true },
 	};
 
 	logger.Debug( "Validating best OpenGL context." );
@@ -853,19 +858,19 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 				break;
 			}
 
-			if ( !r_glExtendedValidation->integer && !row[ 3 ] )
+			if ( !r_glExtendedValidation->integer && !row.testByDefault )
 			{
 				continue;
 			}
 
 			glConfiguration testConfiguration = {};
 
-			testConfiguration.major = row[ 0 ];
-			testConfiguration.minor = row[ 1 ];
-			testConfiguration.profile = row[ 2 ];
+			testConfiguration.major = row.major;
+			testConfiguration.minor = row.minor;
+			testConfiguration.profile = row.profile;
 			testConfiguration.colorBits = colorBits;
 
-			if ( testConfiguration.profile == compatibilityProfile )
+			if ( testConfiguration.profile == glProfile::COMPATIBILITY )
 			{
 				break;
 			}
@@ -887,7 +892,7 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 		{
 			if ( !r_glExtendedValidation->integer )
 			{
-				if ( !row[ 3 ] || row[ 2 ] == coreProfile )
+				if ( !row.testByDefault || row.profile == glProfile::CORE )
 				{
 					continue;
 				}
@@ -895,9 +900,9 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 
 			glConfiguration testConfiguration = {};
 
-			testConfiguration.major = row[ 0 ];
-			testConfiguration.minor = row[ 1 ];
-			testConfiguration.profile = compatibilityProfile;
+			testConfiguration.major = row.major;
+			testConfiguration.minor = row.minor;
+			testConfiguration.profile = glProfile::COMPATIBILITY;
 			testConfiguration.colorBits = colorBits;
 
 			if ( !GLimp_RecreateWindowWhenChange( false, false, testConfiguration ) )
@@ -926,15 +931,15 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 {
 	glConfiguration customConfiguration = {};
 
-	if ( bestConfiguration.profile == coreProfile && !Q_stricmp( r_glProfile->string, "compat" ) )
+	if ( bestConfiguration.profile == glProfile::CORE && !Q_stricmp( r_glProfile->string, "compat" ) )
 	{
 		logger.Debug( "Compatibility profile is forced by r_glProfile" );
 
-		customConfiguration.profile = compatibilityProfile;
+		customConfiguration.profile = glProfile::COMPATIBILITY;
 		customOptions = true;
 	}
 
-	if ( bestConfiguration.profile == compatibilityProfile && !Q_stricmp( r_glProfile->string, "core" ) )
+	if ( bestConfiguration.profile == glProfile::COMPATIBILITY && !Q_stricmp( r_glProfile->string, "core" ) )
 	{
 		if ( GLEWmajor < 2 )
 		{
@@ -945,7 +950,7 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 		{
 			logger.Debug( "Core profile is forced by r_glProfile" );
 
-			customConfiguration.profile = coreProfile;
+			customConfiguration.profile = glProfile::CORE;
 			customOptions = true;
 		}
 	}
@@ -975,15 +980,15 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 	{
 		if ( customConfiguration.major == 3
 			&& customConfiguration.minor < 2
-			&& customConfiguration.profile == undefinedProfile )
+			&& customConfiguration.profile == glProfile::UNDEFINED )
 		{
-			customConfiguration.profile = compatibilityProfile;
+			customConfiguration.profile = glProfile::COMPATIBILITY;
 		}
 		else if ( customConfiguration.major == 2 )
 		{
-			if ( customConfiguration.profile == undefinedProfile )
+			if ( customConfiguration.profile == glProfile::UNDEFINED )
 			{
-				customConfiguration.profile = compatibilityProfile;
+				customConfiguration.profile = glProfile::COMPATIBILITY;
 			}
 
 			if ( customConfiguration.minor == 0 )
@@ -1001,7 +1006,7 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 		customOptions = true;
 	}
 
-	if ( customConfiguration.profile == undefinedProfile )
+	if ( customConfiguration.profile == glProfile::UNDEFINED )
 	{
 		customConfiguration.profile = bestConfiguration.profile;
 	}
@@ -1075,7 +1080,7 @@ static rserr_t GLimp_ApplyPreferredOptions( const bool fullscreen, const bool bo
 
 	bool success = false;
 
-	if ( bestConfiguration.profile == coreProfile )
+	if ( bestConfiguration.profile == glProfile::CORE )
 	{
 		glConfiguration preferredConfiguration = {};
 
@@ -1176,7 +1181,7 @@ static void GLimp_RegisterConfiguration( const glConfiguration& bestConfiguratio
 			glConfig2.glCoreProfile = ( profileBit == GL_CONTEXT_CORE_PROFILE_BIT );
 		}
 
-		int providedProfile = glConfig2.glCoreProfile ? coreProfile : compatibilityProfile ;
+		glProfile providedProfile = glConfig2.glCoreProfile ? glProfile::CORE : glProfile::COMPATIBILITY ;
 		const char *providedProfileName = GLimp_getProfileName( providedProfile );
 
 		if ( providedProfile != requestedConfiguration.profile )
@@ -1210,7 +1215,7 @@ static void GLimp_RegisterConfiguration( const glConfiguration& bestConfiguratio
 		}
 	}
 
-	if ( requestedConfiguration.profile == coreProfile )
+	if ( requestedConfiguration.profile == glProfile::CORE )
 	{
 		// Check if context is forward compatible.
 		int contextFlags;
