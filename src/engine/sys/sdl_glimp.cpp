@@ -1366,17 +1366,15 @@ static rserr_t GLimp_SetMode( const int mode, const bool fullscreen, const bool 
 		// Detect best configuration.
 		rserr_t err = GLimp_ValidateBestContext( GLEWmajor, bestValidatedConfiguration );
 
-		if ( err == rserr_t::RSERR_OLD_GL )
+		if ( err != rserr_t::RSERR_OK )
 		{
-			// Used by error message.
-			glConfig2.glMajor = bestValidatedConfiguration.major;
-			glConfig2.glMinor = bestValidatedConfiguration.minor;
+			if ( err == rserr_t::RSERR_OLD_GL )
+			{
+				// Used by error message.
+				glConfig2.glMajor = bestValidatedConfiguration.major;
+				glConfig2.glMinor = bestValidatedConfiguration.minor;
+			}
 
-			GLimp_DestroyWindowIfExists();
-			return err;
-		}
-		else if ( err != rserr_t::RSERR_OK )
-		{
 			GLimp_DestroyWindowIfExists();
 			return err;
 		}
