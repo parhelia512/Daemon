@@ -1350,10 +1350,8 @@ static rserr_t GLimp_SetMode( const int mode, const bool fullscreen, const bool 
 	// Reuse best configuration on vid_restart
 	// unless glExtendedValidation is modified.
 	static glConfiguration bestValidatedConfiguration = {};
-	static int glExtendedValidation = 0;
 
-	if ( bestValidatedConfiguration.major != 0
-		&& glExtendedValidation == r_glExtendedValidation->integer )
+	if ( r_glExtendedValidation->integer && bestValidatedConfiguration.major != 0 )
 	{
 		const char* bestValidatedProfileName = GLimp_getProfileName( bestValidatedConfiguration.profile );
 
@@ -1384,8 +1382,6 @@ static rserr_t GLimp_SetMode( const int mode, const bool fullscreen, const bool 
 		}
 	}
 
-	glExtendedValidation = r_glExtendedValidation->integer;
-
 	/* Do not concatenate those two lines or the affectation
 	will be done only once.
 	See https://github.com/DaemonEngine/Daemon/issues/566 */
@@ -1400,7 +1396,6 @@ static rserr_t GLimp_SetMode( const int mode, const bool fullscreen, const bool 
 		bestConfiguration.minor,
 		bestProfileName );
 
-	glExtendedValidation = r_glExtendedValidation->integer;
 	static glConfiguration requestedConfiguration = {};
 
 	// Attempt to apply custom configuration if exists.
