@@ -849,13 +849,12 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 
 	for ( int colorBits : {24, 16} )
 	{
-		// Test core profiles, stop on first valid one.
 		for ( auto& row : glSupportArray )
 		{
-			if ( GLEWmajor < 2 )
+			if ( GLEWmajor < 2 && row.profile == glProfile::CORE )
 			{
 				// GLEW version < 2.0.0 doesn't support OpenGL core profiles.
-				break;
+				continue;
 			}
 
 			if ( !r_glExtendedValidation->integer && !row.testByDefault )
@@ -863,46 +862,10 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 				continue;
 			}
 
-			glConfiguration testConfiguration = {};
-
+			glConfiguration testConfiguration;
 			testConfiguration.major = row.major;
 			testConfiguration.minor = row.minor;
 			testConfiguration.profile = row.profile;
-			testConfiguration.colorBits = colorBits;
-
-			if ( testConfiguration.profile == glProfile::COMPATIBILITY )
-			{
-				break;
-			}
-
-			if ( !GLimp_RecreateWindowWhenChange( false, false, testConfiguration ) )
-			{
-				return rserr_t::RSERR_INVALID_MODE;
-			}
-
-			if ( GLimp_CreateContext( testConfiguration ) )
-			{
-				bestValidatedConfiguration = testConfiguration;
-				return rserr_t::RSERR_OK;
-			}
-		}
-
-		// Test compatibility profiles if no core profile is valid.
-		for ( auto& row : glSupportArray )
-		{
-			if ( !r_glExtendedValidation->integer )
-			{
-				if ( !row.testByDefault || row.profile == glProfile::CORE )
-				{
-					continue;
-				}
-			}
-
-			glConfiguration testConfiguration = {};
-
-			testConfiguration.major = row.major;
-			testConfiguration.minor = row.minor;
-			testConfiguration.profile = glProfile::COMPATIBILITY;
 			testConfiguration.colorBits = colorBits;
 
 			if ( !GLimp_RecreateWindowWhenChange( false, false, testConfiguration ) )
