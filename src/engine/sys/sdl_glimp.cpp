@@ -1090,15 +1090,16 @@ static void GLimp_RegisterConfiguration( const glConfiguration& highestConfigura
 		int providedRedChannelColorBits;
 		SDL_GL_GetAttribute( SDL_GL_RED_SIZE, &providedRedChannelColorBits );
 
-		int providedColorBits = providedRedChannelColorBits == 8 ? 24 : 16;
+		glConfig.colorBits = providedRedChannelColorBits == 8 ? 24 : 16;
 
-		if ( requestedConfiguration.colorBits != providedColorBits )
+		if ( requestedConfiguration.colorBits != glConfig.colorBits )
 		{
-			logger.Warn( "Provided OpenGL %d-bit channel depth is not the same as requested %d-bit depth.", providedColorBits, requestedConfiguration.colorBits );
+			logger.Warn( "Provided OpenGL %d-bit channel depth is not the same as requested %d-bit depth.",
+				glConfig.colorBits, requestedConfiguration.colorBits );
 		}
 		else
 		{
-			logger.Debug( "Provided OpenGL context uses %d-bit channel depth.", providedColorBits );
+			logger.Debug( "Provided OpenGL context uses %d-bit channel depth.", glConfig.colorBits );
 		}
 	}
 
@@ -1129,9 +1130,6 @@ static void GLimp_RegisterConfiguration( const glConfiguration& highestConfigura
 
 	/* FIXME: It looks like MSAA was only implemented in legacy renderer.
 	int samples = std::max( 0, r_ext_multisample->integer ); */
-
-	glConfig.colorBits = requestedConfiguration.colorBits;
-	logger.Notice("Using %d color bits", glConfig.colorBits );
 
 	{
 		int GLmajor, GLminor;
