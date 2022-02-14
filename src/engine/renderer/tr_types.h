@@ -346,7 +346,7 @@ struct glconfig_t
 
 	int colorBits;
 
-	// FIXME: it doesn't look like fully implemented (do we need this?)
+	// TODO(0.53): Delete, unused.
 	int stencilBits;
 
 	// TODO(0.53): Delete, unused.

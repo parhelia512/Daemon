@@ -102,7 +102,6 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 	cvar_t      *r_checkGLErrors;
 	cvar_t      *r_logFile;
 
-	cvar_t      *r_stencilbits;
 	cvar_t      *r_depthbits;
 	cvar_t      *r_colorbits;
 	cvar_t      *r_alphabits;
@@ -802,11 +801,7 @@ ScreenshotCmd screenshotPNGRegistration("screenshotPNG", ssFormat_t::SSF_PNG, "p
 		GLimp_LogComment( "--- GL_SetDefaultState ---\n" );
 
 		GL_ClearDepth( 1.0f );
-
-		if ( glConfig.stencilBits >= 4 )
-		{
-			GL_ClearStencil( 0 );
-		}
+		GL_ClearStencil( 0 );
 
 		GL_FrontFace( GL_CCW );
 		GL_CullFace( GL_FRONT );
@@ -932,7 +927,7 @@ ScreenshotCmd screenshotPNGRegistration("screenshotPNG", ssFormat_t::SSF_PNG, "p
 		Log::Notice("GL_MAX_RENDERBUFFER_SIZE: %d", glConfig2.maxRenderbufferSize );
 		Log::Notice("GL_MAX_COLOR_ATTACHMENTS: %d", glConfig2.maxColorAttachments );
 
-		Log::Notice("PIXELFORMAT: color(%d-bits) stencil(%d-bits)", glConfig.colorBits, glConfig.stencilBits );
+		Log::Notice("PIXELFORMAT: color(%d-bits)", glConfig.colorBits );
 
 		{
 			std::string out;
@@ -1103,7 +1098,6 @@ ScreenshotCmd screenshotPNGRegistration("screenshotPNG", ssFormat_t::SSF_PNG, "p
 		r_colorMipLevels = ri.Cvar_Get( "r_colorMipLevels", "0", CVAR_LATCH );
 		r_colorbits = ri.Cvar_Get( "r_colorbits", "0",  CVAR_LATCH );
 		r_alphabits = ri.Cvar_Get( "r_alphabits", "0",  CVAR_LATCH );
-		r_stencilbits = ri.Cvar_Get( "r_stencilbits", "8",  CVAR_LATCH );
 		r_depthbits = ri.Cvar_Get( "r_depthbits", "0",  CVAR_LATCH );
 		r_ext_multisample = ri.Cvar_Get( "r_ext_multisample", "0",  CVAR_LATCH | CVAR_ARCHIVE );
 		r_mode = ri.Cvar_Get( "r_mode", "-2", CVAR_LATCH | CVAR_ARCHIVE );

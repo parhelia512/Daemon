@@ -2821,7 +2821,6 @@ static inline void halfToFloat( const f16vec4_t in, vec4_t out )
 	extern cvar_t *r_znear; // near Z clip plane
 	extern cvar_t *r_zfar;
 
-	extern cvar_t *r_stencilbits; // number of desired stencil bits
 	extern cvar_t *r_depthbits; // number of desired depth bits
 	extern cvar_t *r_colorbits; // number of desired color bits, only relevant for fullscreen
 	extern cvar_t *r_alphabits; // number of desired depth bits

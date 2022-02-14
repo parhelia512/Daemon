@@ -1131,11 +1131,7 @@ static void GLimp_RegisterConfiguration( const glConfiguration& highestConfigura
 	int samples = std::max( 0, r_ext_multisample->integer ); */
 
 	glConfig.colorBits = requestedConfiguration.colorBits;
-	glConfig.stencilBits = std::max( 0, r_stencilbits->integer );
-
-	logger.Notice("Using %d color bits, %d stencil display.",
-		glConfig.colorBits,
-		glConfig.stencilBits );
+	logger.Notice("Using %d color bits", glConfig.colorBits );
 
 	{
 		int GLmajor, GLminor;
