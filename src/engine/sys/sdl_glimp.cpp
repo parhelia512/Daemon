@@ -786,7 +786,8 @@ static rserr_t GLimp_SetModeAndResolution( const int mode )
 	return rserr_t::RSERR_OK;
 }
 
-static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &bestValidatedConfiguration )
+static rserr_t GLimp_ValidateBestContext(
+	const int GLEWmajor, glConfiguration &bestValidatedConfiguration, glConfiguration& extendedValidationConfiguration )
 {
 	/* We iterate known OpenGL versions from highest to lowest,
 	iterating core profiles first, then compatibility profile,
@@ -847,6 +848,7 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 
 	logger.Debug( "Validating best OpenGL context." );
 
+	bool needHighestExtended = !!r_glExtendedValidation->integer;
 	for ( int colorBits : {24, 16} )
 	{
 		for ( auto& row : glSupportArray )
@@ -857,7 +859,7 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 				continue;
 			}
 
-			if ( !r_glExtendedValidation->integer && !row.testByDefault )
+			if ( !needHighestExtended && !row.testByDefault )
 			{
 				continue;
 			}
@@ -875,8 +877,17 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 
 			if ( GLimp_CreateContext( testConfiguration ) )
 			{
-				bestValidatedConfiguration = testConfiguration;
-				return rserr_t::RSERR_OK;
+				if ( needHighestExtended )
+				{
+					needHighestExtended = false;
+					extendedValidationConfiguration = testConfiguration;
+				}
+
+				if ( row.testByDefault )
+				{
+					bestValidatedConfiguration = testConfiguration;
+					return rserr_t::RSERR_OK;
+				}
 			}
 		}
 	}
@@ -890,7 +901,7 @@ static rserr_t GLimp_ValidateBestContext( const int GLEWmajor, glConfiguration &
 	return rserr_t::RSERR_OLD_GL;
 }
 
-static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscreen, const bool bordered, const glConfiguration &bestConfiguration, glConfiguration &requestedConfiguration, bool &customOptions )
+static glConfiguration GLimp_ApplyCustomOptions( const int GLEWmajor, const glConfiguration &bestConfiguration )
 {
 	glConfiguration customConfiguration = {};
 
@@ -899,7 +910,6 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 		logger.Debug( "Compatibility profile is forced by r_glProfile" );
 
 		customConfiguration.profile = glProfile::COMPATIBILITY;
-		customOptions = true;
 	}
 
 	if ( bestConfiguration.profile == glProfile::COMPATIBILITY && !Q_stricmp( r_glProfile->string, "core" ) )
@@ -914,11 +924,8 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 			logger.Debug( "Core profile is forced by r_glProfile" );
 
 			customConfiguration.profile = glProfile::CORE;
-			customOptions = true;
 		}
 	}
-
-	// Beware: unset cvar is equal to 0.
 
 	customConfiguration.major = std::max( 0, r_glMajorVersion->integer );
 	customConfiguration.minor = std::max( 0, r_glMinorVersion->integer );
@@ -962,11 +969,9 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 			}
 		}
 
-		logger.Debug( "GL version %d.%d is forced by r_MajorVersion and r_MinorVersion",
+		logger.Debug( "GL version %d.%d is forced by r_glMajorVersion and r_glMinorVersion",
 			customConfiguration.major,
 			customConfiguration.minor );
-
-		customOptions = true;
 	}
 
 	if ( customConfiguration.profile == glProfile::UNDEFINED )
@@ -986,134 +991,53 @@ static rserr_t GLimp_ApplyCustomOptions( const int GLEWmajor, const bool fullscr
 		{
 			logger.Debug( "Color framebuffer bitness %d is forced by r_colorbits",
 				customConfiguration.colorBits );
-
-			customOptions = true;
 		}
 	}
 
-	if ( customOptions )
-	{
-		if ( !GLimp_RecreateWindowWhenChange( fullscreen, bordered, customConfiguration ) )
-		{
-			return rserr_t::RSERR_INVALID_MODE;
-		}
-
-		const char* customProfileName = GLimp_getProfileName( customConfiguration.profile );
-
-		/* When calling GLimp_CreateContext() some drivers may
-		provide a valid context that is unusable while GL_CheckErrors()
-		catches nothing.
-
-		We can catch some errors when calling GLimp_DetectAvailableModes(),
-		see below. */
-
-		if ( GLimp_CreateContext( customConfiguration ) )
-		{
-			logger.Notice( "Using custom context: %d-bit OpenGL %d.%d %s",
-				customConfiguration.colorBits,
-				customConfiguration.major,
-				customConfiguration.minor,
-				customProfileName );
-
-			requestedConfiguration = customConfiguration;
-		}
-		else
-		{
-			logger.Warn( "Failed custom context: %d-bit OpenGL %d.%d %s",
-				customConfiguration.colorBits,
-				customConfiguration.major,
-				customConfiguration.minor,
-				customProfileName );
-
-			logger.Warn( "SDL_GL_CreateContext failed: %s", SDL_GetError() );
-
-			customOptions = false;
-		}
-	}
-
-	return rserr_t::RSERR_OK;
+	return customConfiguration;
 }
 
-static rserr_t GLimp_ApplyPreferredOptions( const bool fullscreen, const bool bordered, const glConfiguration &bestConfiguration, glConfiguration &requestedConfiguration )
+static std::string ContextDescription( const glConfiguration& configuration )
 {
-	if ( !GLimp_RecreateWindowWhenChange( fullscreen, bordered, bestConfiguration ) )
+	return Str::Format( "%d-bit OpenGL %d.%d %s",
+		configuration.colorBits,
+		configuration.major,
+		configuration.minor,
+		GLimp_getProfileName( configuration.profile ) );
+}
+
+static bool CreateWindowAndContext(
+	bool fullscreen, bool bordered,
+	Str::StringRef contextAdjective,
+	const glConfiguration& customConfiguration)
+{
+	if ( !GLimp_RecreateWindowWhenChange( fullscreen, bordered, customConfiguration ) )
 	{
-		return rserr_t::RSERR_INVALID_MODE;
+		logger.Warn( "Failed to create window for %s context - %s",
+			contextAdjective,
+			ContextDescription( customConfiguration ) );
+		return false;
 	}
 
-	bool success = false;
-
-	if ( bestConfiguration.profile == glProfile::CORE )
+	if ( !GLimp_CreateContext( customConfiguration ) )
 	{
-		glConfiguration preferredConfiguration = {};
-
-		preferredConfiguration.major = 3;
-		preferredConfiguration.minor = 2;
-		preferredConfiguration.profile = bestConfiguration.profile;
-		preferredConfiguration.colorBits = bestConfiguration.colorBits;
-
-		const char* preferredProfileName = GLimp_getProfileName( preferredConfiguration.profile );
-
-		if ( GLimp_CreateContext( preferredConfiguration ) )
-		{
-			logger.Notice( "Using preferred context: %d-bit OpenGL %d.%d %s", 
-				preferredConfiguration.colorBits,
-				preferredConfiguration.major,
-				preferredConfiguration.minor,
-				preferredProfileName );
-
-			success = true;
-			requestedConfiguration = preferredConfiguration;
-		}
-		else
-		{
-			logger.Warn( "Failed preferred context: %d-bit OpenGL %d.%d %s", 
-				bestConfiguration.colorBits,
-				preferredConfiguration.major,
-				preferredConfiguration.minor,
-				preferredProfileName );
-		}
-	}
-
-	if ( !success )
-	{
-		const char* bestProfileName = GLimp_getProfileName( bestConfiguration.profile );
-
-		if ( GLimp_CreateContext( bestConfiguration ) )
-		{
-			logger.Notice( "Using best context: %d-bit OpenGL %d.%d %s",
-				bestConfiguration.colorBits,
-				bestConfiguration.major,
-				bestConfiguration.minor,
-				bestProfileName );
-
-			success = true;
-			requestedConfiguration = bestConfiguration;
-		}
-		else
-		{
-			logger.Warn( "Failed best context: %d-bit OpenGL %d.%d %s",
-				bestConfiguration.colorBits,
-				bestConfiguration.major,
-				bestConfiguration.minor,
-				bestProfileName );
-		}
-	}
-
-	if ( !success )
-	{
+		logger.Warn( "Failed to initialize %s context - %s",
+			contextAdjective,
+			ContextDescription( customConfiguration ) );
 		logger.Warn( "SDL_GL_CreateContext failed: %s", SDL_GetError() );
-		GLimp_DestroyWindowIfExists();
-		return rserr_t::RSERR_INVALID_MODE;
+		return false;
 	}
 
-	return rserr_t::RSERR_OK;
+	logger.Notice( "Using %s context - %s",
+		contextAdjective,
+		ContextDescription( customConfiguration ) );
+	return true;
 }
 
-static void GLimp_RegisterConfiguration( const glConfiguration& bestConfiguration, const glConfiguration &requestedConfiguration )
+static void GLimp_RegisterConfiguration( const glConfiguration& highestConfiguration, const glConfiguration &requestedConfiguration )
 {
-	glConfig2.glBestMajor = bestConfiguration.major;
-	glConfig2.glBestMinor = bestConfiguration.minor;
+	glConfig2.glHighestMajor = highestConfiguration.major;
+	glConfig2.glHighestMinor = highestConfiguration.minor;
 
 	glConfig2.glRequestedMajor = requestedConfiguration.major;
 	glConfig2.glRequestedMinor = requestedConfiguration.minor;
@@ -1349,22 +1273,17 @@ static rserr_t GLimp_SetMode( const int mode, const bool fullscreen, const bool 
 
 	// Reuse best configuration on vid_restart
 	// unless glExtendedValidation is modified.
-	static glConfiguration bestValidatedConfiguration = {};
+	static glConfiguration bestValidatedConfiguration = {}; // considering only up to OpenGL 3.2
+	static glConfiguration extendedValidationResult = {}; // max available OpenGL version for diagnostic purposes
 
-	if ( r_glExtendedValidation->integer && bestValidatedConfiguration.major != 0 )
+	if ( r_glExtendedValidation->integer && extendedValidationResult.major != 0 )
 	{
-		const char* bestValidatedProfileName = GLimp_getProfileName( bestValidatedConfiguration.profile );
-
-		logger.Debug( "Previously best validated context: %d-bit OpenGL %d.%d %s",
-			bestValidatedConfiguration.colorBits,
-			bestValidatedConfiguration.major,
-			bestValidatedConfiguration.minor,
-			bestValidatedProfileName );
+		logger.Debug( "Previously best validated context: %s", ContextDescription( extendedValidationResult ) );
 	}
-	else
+	else if ( bestValidatedConfiguration.major == 0 || r_glExtendedValidation->integer )
 	{
 		// Detect best configuration.
-		rserr_t err = GLimp_ValidateBestContext( GLEWmajor, bestValidatedConfiguration );
+		rserr_t err = GLimp_ValidateBestContext( GLEWmajor, bestValidatedConfiguration, extendedValidationResult );
 
 		if ( err != rserr_t::RSERR_OK )
 		{
@@ -1380,52 +1299,34 @@ static rserr_t GLimp_SetMode( const int mode, const bool fullscreen, const bool 
 		}
 	}
 
-	/* Do not concatenate those two lines or the affectation
-	will be done only once.
-	See https://github.com/DaemonEngine/Daemon/issues/566 */
-	static glConfiguration bestConfiguration = {};
-	bestConfiguration = bestValidatedConfiguration;
-
-	const char* bestProfileName = GLimp_getProfileName( bestConfiguration.profile );
-
-	logger.Notice( "Best context: %d-bit OpenGL %d.%d %s",
-		bestConfiguration.colorBits,
-		bestConfiguration.major,
-		bestConfiguration.minor,
-		bestProfileName );
-
-	static glConfiguration requestedConfiguration = {};
-
-	// Attempt to apply custom configuration if exists.
-
-	bool customOptions = false;
-
+	if ( r_glExtendedValidation->integer )
 	{
-		rserr_t err = GLimp_ApplyCustomOptions( GLEWmajor, fullscreen, bordered, bestConfiguration, requestedConfiguration, customOptions );
-
-		if ( err != rserr_t::RSERR_OK )
-		{
-			return err;
-		}
+		logger.Notice( "Highest available context: %s", ContextDescription( extendedValidationResult ) );
 	}
 
-	/* If no custom configuration is set or if it failed,
-	attempt to apply 3.2 if core profile is supported,
-	otherwise attempt to apply best configuration. */
+	glConfiguration requestedConfiguration = {}; // The one we end up using in CreateContext calls etc.
 
-	if ( !customOptions )
+	// Attempt to apply custom configuration if exists.
+	glConfiguration customConfiguration = GLimp_ApplyCustomOptions( GLEWmajor, bestValidatedConfiguration );
+	if ( customConfiguration != bestValidatedConfiguration &&
+	     CreateWindowAndContext( fullscreen, bordered, "custom", customConfiguration ) )
 	{
-		rserr_t err = GLimp_ApplyPreferredOptions( fullscreen, bordered, bestConfiguration, requestedConfiguration );
+		requestedConfiguration = customConfiguration;
+	}
 
-		if ( err != rserr_t::RSERR_OK )
+	if ( requestedConfiguration.major == 0 )
+	{
+		if ( !CreateWindowAndContext(fullscreen, bordered, "preferred", bestValidatedConfiguration ) )
 		{
-			return err;
+			GLimp_DestroyWindowIfExists();
+			return rserr_t::RSERR_INVALID_MODE;
 		}
+		requestedConfiguration = bestValidatedConfiguration;
 	}
 
 	GLimp_DrawWindowContent();
 
-	GLimp_RegisterConfiguration( bestConfiguration, requestedConfiguration );
+	GLimp_RegisterConfiguration( extendedValidationResult, requestedConfiguration );
 
 	{
 		rserr_t err = GLimp_CheckOpenGLVersion( requestedConfiguration );

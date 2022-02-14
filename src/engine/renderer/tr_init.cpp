@@ -955,7 +955,9 @@ ScreenshotCmd screenshotPNGRegistration("screenshotPNG", ssFormat_t::SSF_PNG, "p
 
 		if ( !!r_glExtendedValidation->integer )
 		{
-			Log::Notice("Using OpenGL version %d.%d, requested: %d.%d, best: %d.%d", glConfig2.glMajor, glConfig2.glMinor, glConfig2.glRequestedMajor, glConfig2.glRequestedMinor, glConfig2.glBestMajor, glConfig2.glBestMinor );
+			Log::Notice("Using OpenGL version %d.%d, requested: %d.%d, highest: %d.%d",
+				glConfig2.glMajor, glConfig2.glMinor, glConfig2.glRequestedMajor, glConfig2.glRequestedMinor,
+				glConfig2.glHighestMajor, glConfig2.glHighestMinor );
 		}
 		else
 		{

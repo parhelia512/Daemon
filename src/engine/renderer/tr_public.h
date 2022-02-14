@@ -45,8 +45,8 @@ struct glconfig2_t
 {
 	bool textureCompressionRGTCAvailable;
 
-	int glBestMajor;
-	int glBestMinor;
+	int glHighestMajor;
+	int glHighestMinor;
 
 	int glRequestedMajor;
 	int glRequestedMinor;
