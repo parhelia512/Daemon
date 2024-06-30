@@ -36,6 +36,9 @@
 
 #include "q_shared.h"
 
+#define DotProduct4(x, y)            (( x )[ 0 ] * ( y )[ 0 ] + ( x )[ 1 ] * ( y )[ 1 ] + ( x )[ 2 ] * ( y )[ 2 ] + ( x )[ 3 ] * ( y )[ 3 ] )
+#define VectorMultiply( a,b,c )      ( ( c )[ 0 ] = ( a )[ 0 ] * ( b )[ 0 ],( c )[ 1 ] = ( a )[ 1 ] * ( b )[ 1 ],( c )[ 2 ] = ( a )[ 2 ] * ( b )[ 2 ] )
+
 const vec3_t vec3_origin = { 0, 0, 0 };
 
 const vec3_t axisDefault[ 3 ] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
@@ -740,7 +743,7 @@ void SetPlaneSignbits( cplane_t *out )
 
 int BoxOnPlaneSide( const vec3_t emins, const vec3_t emaxs, const cplane_t *p )
 {
-#if idx86_sse
+#if defined(DAEMON_USE_ARCH_INTRINSICS_i686_sse)
 	auto mins = sseLoadVec3Unsafe( emins );
 	auto maxs = sseLoadVec3Unsafe( emaxs );
 	auto normal = sseLoadVec3Unsafe( p->normal );
@@ -1510,7 +1513,7 @@ float VectorDistanceSquared( vec3_t v1, vec3_t v2 )
 // *INDENT-OFF*
 void MatrixIdentity( matrix_t m )
 {
-	memcpy( m, matrixIdentity, sizeof( matrix_t ) );
+	MatrixCopy( matrixIdentity, m );
 }
 
 void MatrixClear( matrix_t m )
@@ -1799,7 +1802,7 @@ void MatrixSetupShear( matrix_t m, vec_t x, vec_t y )
 
 void MatrixMultiply( const matrix_t a, const matrix_t b, matrix_t out )
 {
-#if idx86_sse
+#if defined(DAEMON_USE_ARCH_INTRINSICS_i686_sse)
 	//#error MatrixMultiply
 	int    i;
 	__m128 _t0, _t1, _t2, _t3, _t4, _t5, _t6, _t7;
@@ -3288,7 +3291,8 @@ void QuatTransformVectorInverse( const quat_t q, const vec3_t in, vec3_t out )
 	VectorAdd( out, tmp2, out );
 }
 
-#if !idx86_sse
+// The SSE variants are inline functions in q_shared.h file.
+#if !defined(DAEMON_USE_ARCH_INTRINSICS_i686_sse)
 // create an identity transform
 void TransInit( transform_t *t )
 {

@@ -99,7 +99,6 @@ void R_AddSurfaceToVBOSurfacesList(
 	int             j;
 
 	int             vertexesNum;
-	vboData_t       data;
 
 	int             indexesNum;
 	glIndex_t       *indexes;
@@ -120,14 +119,13 @@ void R_AddSurfaceToVBOSurfacesList(
 	vboSurf->numIndexes = indexesNum;
 	vboSurf->numVerts = vertexesNum;
 
-	memset( &data, 0, sizeof( data ) );
+	vboData_t data{};
 
 	data.xyz = ( vec3_t * ) ri.Hunk_AllocateTempMemory( sizeof( *data.xyz ) * vertexesNum );
 	data.qtangent = ( i16vec4_t * ) ri.Hunk_AllocateTempMemory( sizeof( i16vec4_t ) * vertexesNum );
 	data.boneIndexes = ( int (*)[ 4 ] ) ri.Hunk_AllocateTempMemory( sizeof( *data.boneIndexes ) * vertexesNum );
 	data.boneWeights = ( vec4_t * ) ri.Hunk_AllocateTempMemory( sizeof( *data.boneWeights ) * vertexesNum );
 	data.st = ( f16vec2_t * ) ri.Hunk_AllocateTempMemory( sizeof( f16vec2_t ) * vertexesNum );
-	data.noLightCoords = true;
 	data.numVerts = vertexesNum;
 
 	indexes = ( glIndex_t * ) ri.Hunk_AllocateTempMemory( indexesNum * sizeof( glIndex_t ) );

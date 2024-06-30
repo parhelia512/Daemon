@@ -131,6 +131,9 @@ void Tess_StageIteratorSky()
 		// Only render the outer skybox at this stage
 		gl_skyboxShader->SetUniform_UseCloudMap( false );
 
+		// u_AlphaThreshold
+		gl_skyboxShader->SetUniform_AlphaTest( GLS_ATEST_NONE );
+
 		Tess_DrawElements();
 	}
 
@@ -138,9 +141,8 @@ void Tess_StageIteratorSky()
 	gl_skyboxShader->SetUniform_UseCloudMap( true );
 	gl_skyboxShader->SetUniform_CloudHeight( tess.surfaceShader->sky.cloudHeight );
 
-	for ( int stage = 0; stage < tess.numSurfaceStages; stage++ ) {
-		shaderStage_t* pStage = tess.surfaceShader->stages[stage];
-
+	for ( shaderStage_t *pStage = tess.surfaceStages; pStage < tess.surfaceLastStage; pStage++ )
+	{
 		if ( !RB_EvalExpression( &pStage->ifExp, 1.0 ) ) {
 			continue;
 		}
@@ -151,14 +153,8 @@ void Tess_StageIteratorSky()
 
 		GL_BindToTMU( 1, pStage->bundle[TB_COLORMAP].image[0] );
 
-		uint32_t alphaTestBits = pStage->stateBits & GLS_ATEST_BITS;
-
-		gl_skyboxShader->SetAlphaTesting( alphaTestBits != 0 );
-
-		// u_AlphaTest
-		if ( alphaTestBits != 0 ) {
-			gl_skyboxShader->SetUniform_AlphaTest( pStage->stateBits );
-		}
+		// u_AlphaThreshold
+		gl_skyboxShader->SetUniform_AlphaTest( pStage->stateBits );
 
 		GL_State( pStage->stateBits );
 

@@ -125,11 +125,10 @@ static inline void snorm16ToFloat( const i16vec4_t in, vec4_t out )
 
 static inline f16_t floatToHalf( float in ) {
 	static float scale = powf(2.0f, 15 - 127);
-	floatint_t fi;
 
-	fi.f = in * scale;
+	uint32_t ui = Util::bit_cast<uint32_t>( in * scale );
 
-	return { uint16_t(((fi.ui & 0x80000000) >> 16) | ((fi.ui & 0x0fffe000) >> 13)) };
+	return { uint16_t(((ui & 0x80000000) >> 16) | ((ui & 0x0fffe000) >> 13)) };
 }
 static inline void floatToHalf( const vec4_t in, f16vec4_t out )
 {
@@ -140,10 +139,9 @@ static inline void floatToHalf( const vec4_t in, f16vec4_t out )
 }
 static inline float halfToFloat( f16_t in ) {
 	static float scale = powf(2.0f, 127 - 15);
-	floatint_t fi;
 
-	fi.ui = (((unsigned int)in.bits & 0x8000) << 16) | (((unsigned int)in.bits & 0x7fff) << 13);
-	return fi.f * scale;
+	uint32_t ui = (((unsigned int)in.bits & 0x8000) << 16) | (((unsigned int)in.bits & 0x7fff) << 13);
+	return Util::bit_cast<float>(ui) * scale;
 }
 static inline void halfToFloat( const f16vec4_t in, vec4_t out )
 {
@@ -715,7 +713,6 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 		GLenum  componentType; // the input type for a single component
 		GLboolean normalize; // convert signed integers to the floating point range [-1, 1], and unsigned integers to the range [0, 1]
 		GLsizei stride;
-		GLsizei realStride;
 		GLsizei ofs;
 		GLsizei frameOffset; // for vertex animation, real offset computed as ofs + frame * frameOffset
 	};
@@ -734,14 +731,13 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 		vec3_t *xyz;
 		i16vec4_t *qtangent;
 		u8vec4_t *color;
-		union { f16vec2_t *st; f16vec4_t *stpq; vec2_t *stf; };
+		union { f16vec2_t *st; vec2_t *stf; };
 		int    (*boneIndexes)[ 4 ];
 		vec4_t *boneWeights;
 		f16vec4_t *spriteOrientation;
 
 		int	numFrames;
 		int     numVerts;
-		bool noLightCoords;
 	};
 
 	struct VBO_t
@@ -1055,7 +1051,7 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 		float        imageAnimationSpeed;
 		image_t      *image[ MAX_IMAGE_ANIMATIONS ];
 
-		uint8_t      numTexMods;
+		size_t numTexMods;
 		texModInfo_t *texMods;
 
 		int videoMapHandle;
@@ -1296,8 +1292,8 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 		uint8_t         numDeforms;
 		deformStage_t   deforms[ MAX_SHADER_DEFORMS ];
 
-		uint8_t         numStages;
-		shaderStage_t   *stages[ MAX_SHADER_STAGES ];
+		shaderStage_t *stages;
+		shaderStage_t *lastStage;
 
 		int             currentState; // current state index for cycle purposes
 
@@ -1396,7 +1392,7 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 	struct shaderProgram_t
 	{
 		GLuint    program;
-		GLuint    VS, FS;
+		GLuint    VS, FS, CS;
 		uint32_t  attribs; // vertex array attributes
 		GLint    *uniformLocations;
 		GLuint   *uniformBlockIndexes;
@@ -1524,6 +1520,7 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 		vec3_t         pvsOrigin; // may be different than or.origin for portals
 
 		int            portalLevel; // number of portals this view is through
+		bool isMainView = false;
 		int            mirrorLevel;
 		bool           isMirror; // the portal is a mirror, invert the face culling
 
@@ -2886,21 +2883,6 @@ enum class dynamicLightRenderer_t { LEGACY, TILED };
 	extern cvar_t *r_mode; // video mode
 	extern cvar_t *r_gamma;
 
-	extern cvar_t *r_ext_occlusion_query; // these control use of specific extensions
-	extern cvar_t *r_ext_draw_buffers;
-	extern cvar_t *r_ext_half_float_pixel;
-	extern cvar_t *r_ext_texture_float;
-	extern cvar_t *r_ext_texture_integer;
-	extern cvar_t *r_ext_texture_rg;
-	extern cvar_t *r_ext_texture_filter_anisotropic;
-	extern cvar_t *r_ext_gpu_shader4;
-	extern cvar_t *r_arb_buffer_storage;
-	extern cvar_t *r_arb_map_buffer_range;
-	extern cvar_t *r_arb_sync;
-	extern cvar_t *r_arb_uniform_buffer_object;
-	extern cvar_t *r_arb_texture_gather;
-	extern cvar_t *r_arb_gpu_shader5;
-
 	extern cvar_t *r_nobind; // turns off binding to appropriate textures
 	extern cvar_t *r_singleShader; // make most world faces use default shader
 	extern cvar_t *r_picMip; // controls picmip values
@@ -3312,7 +3294,6 @@ inline bool checkGLErrors()
 	struct stageVars_t
 	{
 		Color::Color color;
-		bool texMatricesChanged[ MAX_TEXTURE_BUNDLES ];
 		matrix_t texMatrices[ MAX_TEXTURE_BUNDLES ];
 	};
 
@@ -3346,50 +3327,68 @@ inline bool checkGLErrors()
 
 	struct shaderCommands_t
 	{
-		shaderVertex_t *verts;	 // at least SHADER_MAX_VERTEXES accessible
+		// For drawing which is not based on static VBOs, the data is written here. These should be
+		// considered WRITE-ONLY buffers as they may be mapped to GPU memory and have abysmal read
+		// performance, e.g. https://github.com/DaemonEngine/Daemon/issues/849
+		shaderVertex_t *verts;   // at least SHADER_MAX_VERTEXES accessible
 		glIndex_t      *indexes; // at least SHADER_MAX_INDEXES accessible
-		uint32_t       vertsWritten, vertexBase;
-		uint32_t       indexesWritten, indexBase;
 
-		VBO_t       *vbo;
-		IBO_t       *ibo;
+		// When writing into the buffers above, these are used to track how much was written.
+		// For some static VBO/IBO-based drawing, these can be used to request a single data range.
+		uint32_t    numIndexes;
+		uint32_t    numVertexes;
 
+		// Must be set by the stage iterator function if needed. These are *not*
+		// automatically cleared by the likes of Tess_End.
 		stageVars_t svars;
 
 		shader_t    *surfaceShader;
 		shader_t    *lightShader;
 
+		// some drawing parameters from drawSurf_t
 		bool    skipTangentSpaces;
 		int16_t     lightmapNum;
 		int16_t     fogNum;
 		bool        bspSurface;
 
-		uint32_t    numIndexes;
-		uint32_t    numVertexes;
+		// Sometimes, this is used when setting vertex attribute pointers.
+		// TODO: why is the attribute selection sometimes taken from this and other times from
+		// the attributes the shader says it wants?
 		uint32_t    attribsSet;
 
+		// Used for static VBO/IBO-based drawing, if multiple ranges of data from the
+		// buffers may be requested.
 		int         multiDrawPrimitives;
 		glIndex_t    *multiDrawIndexes[ MAX_MULTIDRAW_PRIMITIVES ];
 		int         multiDrawCounts[ MAX_MULTIDRAW_PRIMITIVES ];
 
+		// enabled when a skeletal model VBO is used
 		bool    vboVertexSkinning;
 		int         numBones;
 		transform_t bones[ MAX_BONES ];
 
+		// enabled when an MD3 VBO is used
 		bool    vboVertexAnimation;
-		bool    vboVertexSprite;
+
+		// during BSP load
 		bool    buildingVBO;
 
-		// info extracted from current shader or backend mode
+		// This can be thought of a "flush" function for the vertex buffer.
+		// Which function depends on backend mode and also the shader.
 		void ( *stageIteratorFunc )();
-		void ( *stageIteratorFunc2 )();
 
-		int           numSurfaceStages;
-		shaderStage_t **surfaceStages;
+		shaderStage_t *surfaceStages;    // surfaceShader->stages
+		shaderStage_t *surfaceLastStage; // surfaceShader->lastStage
 
 		// preallocated host buffers for verts and indexes
 		shaderVertex_t *vertsBuffer;
 		glIndex_t      *indexesBuffer;
+
+		uint32_t       vertsWritten, vertexBase;
+		uint32_t       indexesWritten, indexBase;
+
+		VBO_t       *vbo; // mapped to vertsBuffer
+		IBO_t       *ibo; // mapped to indexBuffer
 
 #ifdef GL_ARB_sync
 		glRingbuffer_t  vertexRB;
@@ -3405,7 +3404,6 @@ inline bool checkGLErrors()
 
 // *INDENT-OFF*
 	void Tess_Begin( void ( *stageIteratorFunc )(),
-	                 void ( *stageIteratorFunc2 )(),
 	                 shader_t *surfaceShader, shader_t *lightShader,
 	                 bool skipTangentSpaces,
 	                 int lightmapNum,

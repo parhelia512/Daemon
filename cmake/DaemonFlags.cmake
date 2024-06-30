@@ -29,6 +29,26 @@ include(CheckCXXCompilerFlag)
 
 add_definitions(-DDAEMON_BUILD_${CMAKE_BUILD_TYPE})
 
+option(USE_COMPILER_INTRINSICS "Enable usage of compiler intrinsics" ON)
+mark_as_advanced(USE_COMPILER_INTRINSICS)
+
+if (USE_COMPILER_INTRINSICS)
+    add_definitions(-DDAEMON_USE_COMPILER_INTRINSICS=1)
+    message(STATUS "Enabling compiler intrinsics")
+else()
+    message(STATUS "Disabling compiler intrinsics")
+endif()
+
+option(USE_COMPILER_CUSTOMIZATION "Enable usage of compiler custom attributes and operators" ON)
+mark_as_advanced(USE_COMPILER_CUSTOMIZATION)
+
+if (USE_COMPILER_CUSTOMIZATION)
+    add_definitions(-DDAEMON_USE_COMPILER_CUSTOMIZATION=1)
+    message(STATUS "Enabling compiler custom attributes and operators")
+else()
+    message(STATUS "Disabling compiler custom attributes and operators")
+endif()
+
 # Set flag without checking, optional argument specifies build type
 macro(set_c_flag FLAG)
     if (${ARGC} GREATER 1)
@@ -116,6 +136,12 @@ macro(try_linker_flag PROP FLAG)
     endif()
 endmacro()
 
+if (BE_VERBOSE)
+    set(WARNMODE "no-error=")
+else()
+    set(WARNMODE "no-")
+endif()
+
 option(USE_CPU_RECOMMENDED_FEATURES "Use some common hardware features like SSE2, NEON, VFP, MCX16, etc." ON)
 
 if(MINGW AND USE_BREAKPAD)
@@ -126,6 +152,9 @@ if (MSVC)
     set_c_cxx_flag("/MP")
     set_c_cxx_flag("/fp:fast")
     set_c_cxx_flag("/d2Zi+" RELWITHDEBINFO)
+
+    # https://devblogs.microsoft.com/cppblog/msvc-now-correctly-reports-__cplusplus/
+    set_cxx_flag("/Zc:__cplusplus")
 
     # At least Ninja doesn't remove the /W3 flag when we add /W4|/Wall one, which
     # leads to compilation warnings.  Remove /W3 entirely, as /W4|/Wall be used.
@@ -159,15 +188,13 @@ if (MSVC)
     endif()
     set_linker_flag("/LARGEADDRESSAWARE")
 
-    try_flag(WARNINGS   "/wd4068")
+    # These warnings need to be disabled for both Daemon and Unvanquished since they are triggered in shared headers
+    try_flag(WARNINGS "/wd4201")  # nonstandard extension used: nameless struct / union
+    try_flag(WARNINGS "/wd4244")  # 'XXX': conversion from 'YYY' to 'ZZZ', possible loss of data
+    try_flag(WARNINGS "/wd4267")  # 'initializing' : conversion from 'size_t' to 'int', possible loss of data
 
-    # Turn off C4503:, e.g:
-    # warning C4503: 'std::_Tree<std::_Tmap_traits<_Kty,_Ty,_Pr,_Alloc,false>>::_Insert_hint' : decorated name length exceeded, name was truncated
-    # No issue will be caused from this error as long as no two symbols become identical by being truncated.
-    # In practice this rarely happens and even the standard libraries are affected as in the example. So there really is not
-    # much that can to done about it and the warnings about each truncation really just make it more likely
-    # that other more real issues might get missed. So better to remove the distraction when it really is very unlikey to happen.
-    set_c_cxx_flag("/wd4503")
+    # This warning is garbage because it doesn't go away if you parenthesize the expression
+    try_flag(WARNINGS "/wd4706")  # assignment within conditional expression
 
     # Turn off warning C4996:, e.g:
     # warning C4996: 'open': The POSIX name for this item is deprecated. Instead, use the ISO C++ conformant name: _open. See online help for details.    set_c_cxx_flag("/wd4996")
@@ -179,6 +206,7 @@ elseif (NACL)
     set_cxx_flag("-std=gnu++14")
 
     set_c_cxx_flag("-ffast-math")
+    set_c_cxx_flag("-fno-strict-aliasing")
     set_c_cxx_flag("-fvisibility=hidden")
     set_c_cxx_flag("-stdlib=libc++")
     set_c_cxx_flag("--pnacl-allow-exceptions")
@@ -315,7 +343,7 @@ else()
         try_c_cxx_flag(WSTACK_PROTECTOR "-Wstack-protector")
         try_c_cxx_flag(FPIE "-fPIE")
         try_linker_flag(LINKER_PIE "-pie")
-        if (${FLAG_LINKER_PIE} AND MINGW)
+        if ("${FLAG_LINKER_PIE}" AND MINGW)
             # https://github.com/msys2/MINGW-packages/issues/4100
             if (ARCH STREQUAL "i686")
                 set_linker_flag("-Wl,-e,_mainCRTStartup")
@@ -376,7 +404,7 @@ else()
 
         # Use gcc-ar and gcc-ranlib instead of ar and ranlib so that we can use
         # slim LTO objects. This requires a recent version of GCC and binutils.
-        if (${CMAKE_CXX_COMPILER_ID} STREQUAL GNU)
+        if ("${CMAKE_CXX_COMPILER_ID}" STREQUAL GNU)
             if (USE_SLIM_LTO)
                 string(REGEX MATCH "^([0-9]+.[0-9]+)" _version "${CMAKE_CXX_COMPILER_VERSION}")
                 get_filename_component(COMPILER_BASENAME "${CMAKE_C_COMPILER}" NAME)

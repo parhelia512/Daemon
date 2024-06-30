@@ -121,13 +121,11 @@ void ignore_result(T) {}
 
 // vsnprintf is ISO/IEC 9899:1999
 // abstracting this to make it portable
-#ifdef _MSC_VER
+#ifdef _WIN32
 //vsnprintf is non-conformant in MSVC--fails to null-terminate in case of overflow
+//(fixed in newer versions "Beginning with the UCRT in Visual Studio 2015 and Windows 10")
 #define Q_vsnprintf(dest, size, fmt, args) _vsnprintf_s( dest, size, _TRUNCATE, fmt, args )
 #define Q_snprintf(dest, size, fmt, ...) _snprintf_s( dest, size, _TRUNCATE, fmt, __VA_ARGS__ )
-#elif defined( _WIN32 )
-#define Q_vsnprintf _vsnprintf
-#define Q_snprintf  _snprintf
 #else
 #define Q_vsnprintf vsnprintf
 #define Q_snprintf  snprintf
@@ -143,13 +141,6 @@ void ignore_result(T) {}
 	using byte = uint8_t;
 	using uint = unsigned int;
 	enum class qtrinary {qno, qyes, qmaybe};
-
-	union floatint_t
-	{
-		float f;
-		int i;
-		uint ui;
-	};
 
 //=============================================================
 
@@ -248,7 +239,7 @@ void  Com_Free_Aligned( void *ptr );
 	// floats (quat: 4, scale: 1, translation: 3), which is very
 	// convenient for SSE and GLSL, which operate on 4-dimensional
 	// float vectors.
-#if idx86_sse
+#if defined(DAEMON_USE_ARCH_INTRINSICS_i686_sse)
     // Here we have a union of scalar struct and sse struct, transform_u and the
     // scalar struct must match transform_t so we have to use anonymous structs.
     // We disable compiler warnings when using -Wpedantic for this specific case.
@@ -345,27 +336,7 @@ extern const vec3_t   axisDefault[ 3 ];
 extern const matrix_t matrixIdentity;
 extern const quat_t   quatIdentity;
 
-#define nanmask ( 255 << 23 )
-
-#define IS_NAN( x ) ( ( ( *(int *)&( x ) ) & nanmask ) == nanmask )
-
 #define Q_ftol(x) ((long)(x))
-
-	inline unsigned int Q_floatBitsToUint( float number )
-	{
-		floatint_t t;
-
-		t.f = number;
-		return t.ui;
-	}
-
-	inline float Q_uintBitsToFloat( unsigned int number )
-	{
-		floatint_t t;
-
-		t.ui = number;
-		return t.f;
-	}
 
 	// Overall relative error bound (ignoring unknown powerpc case): 5 * 10^-6
 	// https://en.wikipedia.org/wiki/Fast_inverse_square_root#/media/File:2nd-iter.png
@@ -375,11 +346,11 @@ extern const quat_t   quatIdentity;
 		float y;
 
 		// compute approximate inverse square root
-#if defined( idx86_sse )
+#if defined(DAEMON_USE_ARCH_INTRINSICS_i686_sse)
 		// SSE rsqrt relative error bound: 3.7 * 10^-4
 		_mm_store_ss( &y, _mm_rsqrt_ss( _mm_load_ss( &number ) ) );
 #else
-		y = Q_uintBitsToFloat( 0x5f3759df - (Q_floatBitsToUint( number ) >> 1) );
+		y = Util::bit_cast<float>( 0x5f3759df - ( Util::bit_cast<uint32_t>( number ) >> 1 ) );
 		y *= ( 1.5f - ( x * y * y ) ); // initial iteration
 		// relative error bound after the initial iteration: 1.8 * 10^-3
 #endif
@@ -404,30 +375,122 @@ inline float DotProduct( const vec3_t x, const vec3_t y )
 	return x[ 0 ] * y[ 0 ] + x[ 1 ] * y[ 1 ] + x[ 2 ] * y[ 2 ];
 }
 
-#define VectorSubtract( a,b,c )      ( ( c )[ 0 ] = ( a )[ 0 ] - ( b )[ 0 ],( c )[ 1 ] = ( a )[ 1 ] - ( b )[ 1 ],( c )[ 2 ] = ( a )[ 2 ] - ( b )[ 2 ] )
-#define VectorAdd( a,b,c )           ( ( c )[ 0 ] = ( a )[ 0 ] + ( b )[ 0 ],( c )[ 1 ] = ( a )[ 1 ] + ( b )[ 1 ],( c )[ 2 ] = ( a )[ 2 ] + ( b )[ 2 ] )
-#define VectorMultiply( a,b,c )      ( ( c )[ 0 ] = ( a )[ 0 ] * ( b )[ 0 ],( c )[ 1 ] = ( a )[ 1 ] * ( b )[ 1 ],( c )[ 2 ] = ( a )[ 2 ] * ( b )[ 2 ] )
-#define VectorCopy( a,b )            ( ( b )[ 0 ] = ( a )[ 0 ],( b )[ 1 ] = ( a )[ 1 ],( b )[ 2 ] = ( a )[ 2 ] )
-#define VectorScale( v, s, o )       ( ( o )[ 0 ] = ( v )[ 0 ] * ( s ),( o )[ 1 ] = ( v )[ 1 ] * ( s ),( o )[ 2 ] = ( v )[ 2 ] * ( s ) )
+template<typename A, typename B, typename C>
+void VectorSubtract( const A &a, const B &b, C &&c )
+{
+	c[ 0 ] = a[ 0 ] - b[ 0 ];
+	c[ 1 ] = a[ 1 ] - b[ 1 ];
+	c[ 2 ] = a[ 2 ] - b[ 2 ];
+}
+
+template<typename A, typename B, typename C>
+void VectorAdd( const A &a, const B &b, C &&c )
+{
+	c[ 0 ] = a[ 0 ] + b[ 0 ];
+	c[ 1 ] = a[ 1 ] + b[ 1 ];
+	c[ 2 ] = a[ 2 ] + b[ 2 ];
+}
+
+template<typename A, typename B>
+void VectorCopy( const A &a, B &&b )
+{
+	b[ 0 ] = a[ 0 ];
+	b[ 1 ] = a[ 1 ];
+	b[ 2 ] = a[ 2 ];
+}
+
+template<typename V, typename S, typename O>
+void VectorScale( const V &v, S s, O &&o )
+{
+	o[ 0 ] = v[ 0 ] * s;
+	o[ 1 ] = v[ 1 ] * s;
+	o[ 2 ] = v[ 2 ] * s;
+}
+
 /** Stands for MultiplyAdd: adding a vector "b" scaled by "s" to "v" and writing it to "o" */
-#define VectorMA( v, s, b, o )       ( ( o )[ 0 ] = ( v )[ 0 ] + ( b )[ 0 ] * ( s ),( o )[ 1 ] = ( v )[ 1 ] + ( b )[ 1 ] * ( s ),( o )[ 2 ] = ( v )[ 2 ] + ( b )[ 2 ] * ( s ) )
+template<typename V, typename S, typename B, typename O>
+void VectorMA( const V &v, S s, const B &b, O &&o )
+{
+	o[ 0 ] = v[ 0 ] + b[ 0 ] * s;
+	o[ 1 ] = v[ 1 ] + b[ 1 ] * s;
+	o[ 2 ] = v[ 2 ] + b[ 2 ] * s;
+}
+
+template<typename A>
+void VectorClear( A &&a )
+{
+	a[ 0 ] = 0;
+	a[ 1 ] = 0;
+	a[ 2 ] = 0;
+}
+
+template<typename A, typename B>
+void VectorNegate( const A &a, B &&b )
+{
+	b[ 0 ] = -a[ 0 ];
+	b[ 1 ] = -a[ 1 ];
+	b[ 2 ] = -a[ 2 ];
+}
+
+template<typename V, typename X, typename Y, typename Z>
+void VectorSet( V &&v, X x, Y y, Z z )
+{
+	v[ 0 ] = x;
+	v[ 1 ] = y;
+	v[ 2 ] = z;
+}
+
+template<typename A, typename B>
+void Vector2Copy( const A &a, B &&b )
+{
+	b[ 0 ] = a[ 0 ];
+	b[ 1 ] = a[ 1 ];
+}
+
+template<typename V, typename X, typename Y>
+void Vector2Set( V &&v, X x, Y y )
+{
+	v[ 0 ] = x;
+	v[ 1 ] = y;
+}
+
+template<typename A, typename B, typename C>
+void Vector2Subtract( const A &a, const B &b, C &&c )
+{
+	c[ 0 ] = a[ 0 ] - b[ 0 ];
+	c[ 1 ] = a[ 1 ] - b[ 1 ];
+}
+
+template<typename V, typename X, typename Y, typename Z, typename W>
+void Vector4Set( V &&v, X x, Y y, Z z, W w )
+{
+	v[ 0 ] = x;
+	v[ 1 ] = y;
+	v[ 2 ] = z;
+	v[ 3 ] = w;
+}
+
+template<typename A, typename B>
+void Vector4Copy( const A &a, B &&b )
+{
+	b[ 0 ] = a[ 0 ];
+	b[ 1 ] = a[ 1 ];
+	b[ 2 ] = a[ 2 ];
+	b[ 3 ] = a[ 3 ];
+}
+
+// good for floats only
+template<typename V>
+void SnapVector( V &&v )
+{
+	v[ 0 ] = roundf( v[ 0 ] );
+	v[ 1 ] = roundf( v[ 1 ] );
+	v[ 2 ] = roundf( v[ 2 ] );
+}
+
 #define VectorLerpTrem( f, s, e, r ) (( r )[ 0 ] = ( s )[ 0 ] + ( f ) * (( e )[ 0 ] - ( s )[ 0 ] ), \
                                       ( r )[ 1 ] = ( s )[ 1 ] + ( f ) * (( e )[ 1 ] - ( s )[ 1 ] ), \
                                       ( r )[ 2 ] = ( s )[ 2 ] + ( f ) * (( e )[ 2 ] - ( s )[ 2 ] ))
-
-#define VectorClear( a )             ( ( a )[ 0 ] = ( a )[ 1 ] = ( a )[ 2 ] = 0 )
-#define VectorNegate( a,b )          ( ( b )[ 0 ] = -( a )[ 0 ],( b )[ 1 ] = -( a )[ 1 ],( b )[ 2 ] = -( a )[ 2 ] )
-#define VectorSet( v, x, y, z )      ( ( v )[ 0 ] = ( x ), ( v )[ 1 ] = ( y ), ( v )[ 2 ] = ( z ) )
-
-#define Vector2Set( v, x, y )        ( ( v )[ 0 ] = ( x ),( v )[ 1 ] = ( y ) )
-#define Vector2Copy( a,b )           ( ( b )[ 0 ] = ( a )[ 0 ],( b )[ 1 ] = ( a )[ 1 ] )
-#define Vector2Subtract( a,b,c )     ( ( c )[ 0 ] = ( a )[ 0 ] - ( b )[ 0 ],( c )[ 1 ] = ( a )[ 1 ] - ( b )[ 1 ] )
-
-#define Vector4Set( v, x, y, z, n )  ( ( v )[ 0 ] = ( x ),( v )[ 1 ] = ( y ),( v )[ 2 ] = ( z ),( v )[ 3 ] = ( n ) )
-#define Vector4Copy( a,b )           ( ( b )[ 0 ] = ( a )[ 0 ],( b )[ 1 ] = ( a )[ 1 ],( b )[ 2 ] = ( a )[ 2 ],( b )[ 3 ] = ( a )[ 3 ] )
-#define DotProduct4(x, y)            (( x )[ 0 ] * ( y )[ 0 ] + ( x )[ 1 ] * ( y )[ 1 ] + ( x )[ 2 ] * ( y )[ 2 ] + ( x )[ 3 ] * ( y )[ 3 ] )
-
-#define SnapVector( v )              do { ( v )[ 0 ] = ( floor( ( v )[ 0 ] + 0.5f ) ); ( v )[ 1 ] = ( floor( ( v )[ 1 ] + 0.5f ) ); ( v )[ 2 ] = ( floor( ( v )[ 2 ] + 0.5f ) ); } while ( 0 )
 
 	float    RadiusFromBounds( const vec3_t mins, const vec3_t maxs );
 	void     ZeroBounds( vec3_t mins, vec3_t maxs );
@@ -766,7 +829,7 @@ inline float DotProduct( const vec3_t x, const vec3_t y )
 //=============================================
 // combining Transformations
 
-#if idx86_sse
+#if defined(DAEMON_USE_ARCH_INTRINSICS_i686_sse)
 /* swizzles for _mm_shuffle_ps instruction */
 #define SWZ_XXXX 0x00
 #define SWZ_YXXX 0x01
@@ -1285,6 +1348,7 @@ inline float DotProduct( const vec3_t x, const vec3_t y )
 		t->sseRot = sseQuatNormalize( t->sseRot );
 	}
 #else
+	// The non-SSE variants are in q_math.cpp file.
 	void TransInit( transform_t *t );
 	void TransCopy( const transform_t *in, transform_t *out );
 

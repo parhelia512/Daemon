@@ -106,13 +106,17 @@ protected:
 	const uint32_t                 _vertexAttribsRequired;
 	uint32_t                       _vertexAttribs; // can be set by uniforms
 	GLShaderManager                 *_shaderManager;
-	size_t                         _uniformStorageSize;
 
-	std::string                    _fragmentShaderText;
+	bool                           _hasVertexShader;
 	std::string                    _vertexShaderText;
+	bool                           _hasFragmentShader;
+	std::string                    _fragmentShaderText;
+	bool                           _hasComputeShader;
+	std::string                    _computeShaderText;
 	std::vector< shaderProgram_t > _shaderPrograms;
 
 
+	size_t                         _uniformStorageSize;
 	std::vector< GLUniform * >      _uniforms;
 	std::vector< GLUniformBlock * > _uniformBlocks;
 	std::vector< GLCompileMacro * > _compileMacros;
@@ -121,7 +125,8 @@ protected:
 
 
 
-	GLShader( const std::string &name, uint32_t vertexAttribsRequired, GLShaderManager *manager ) :
+	GLShader( const std::string &name, uint32_t vertexAttribsRequired, GLShaderManager *manager,
+			  const bool hasVertexShader = true, const bool hasFragmentShader = true, const bool hasComputeShader = false ) :
 		_name( name ),
 		_mainShaderName( name ),
 		_activeMacros( 0 ),
@@ -130,11 +135,15 @@ protected:
 		_vertexAttribsRequired( vertexAttribsRequired ),
 		_vertexAttribs( 0 ),
 		_shaderManager( manager ),
+		_hasVertexShader( hasVertexShader ),
+		_hasFragmentShader( hasFragmentShader ),
+		_hasComputeShader( hasComputeShader ),
 		_uniformStorageSize( 0 )
 	{
 	}
 
-	GLShader( const std::string &name, const std::string &mainShaderName, uint32_t vertexAttribsRequired, GLShaderManager *manager ) :
+	GLShader( const std::string &name, const std::string &mainShaderName, uint32_t vertexAttribsRequired, GLShaderManager *manager,
+			  const bool hasVertexShader = true, const bool hasFragmentShader = true, const bool hasComputeShader = false ) :
 		_name( name ),
 		_mainShaderName( mainShaderName ),
 		_activeMacros( 0 ),
@@ -143,6 +152,9 @@ protected:
 		_vertexAttribsRequired( vertexAttribsRequired ),
 		_vertexAttribs( 0 ),
 		_shaderManager( manager ),
+		_hasVertexShader( hasVertexShader ),
+		_hasFragmentShader( hasFragmentShader ),
+		_hasComputeShader( hasComputeShader ),
 		_uniformStorageSize( 0 )
 	{
 	}
@@ -167,6 +179,10 @@ public:
 			if ( p->FS )
 			{
 				glDeleteShader( p->FS );
+			}
+
+			if ( p->CS ) {
+				glDeleteShader( p->CS );
 			}
 
 			if ( p->uniformFirewall )
@@ -229,13 +245,16 @@ public:
 protected:
 	bool         GetCompileMacrosString( size_t permutation, std::string &compileMacrosOut ) const;
 	virtual void BuildShaderVertexLibNames( std::string& /*vertexInlines*/ ) { };
-	virtual void BuildShaderFragmentLibNames( std::string& /*vertexInlines*/ ) { };
+	virtual void BuildShaderFragmentLibNames( std::string& /*fragmentInlines*/ ) { };
+	virtual void BuildShaderComputeLibNames( std::string& /*computeInlines*/ ) {};
 	virtual void BuildShaderCompileMacros( std::string& /*vertexInlines*/ ) { };
 	virtual void SetShaderProgramUniforms( shaderProgram_t* /*shaderProgram*/ ) { };
 	int          SelectProgram();
 public:
 	void BindProgram( int deformIndex );
-	void SetRequiredVertexPointers();
+	void DispatchCompute( const GLuint globalWorkgroupX, const GLuint globalWorkgroupY, const GLuint globalWorkgroupZ );
+	void DispatchComputeIndirect( const GLintptr indirectBuffer );
+	void SetRequiredVertexPointers( bool vboVertexSprite = false );
 
 	bool IsMacroSet( int bit )
 	{
@@ -280,6 +299,7 @@ class GLShaderManager
 
 public:
 	GLHeader GLVersionDeclaration;
+	GLHeader GLComputeVersionDeclaration;
 	GLHeader GLCompatHeader;
 	GLHeader GLVertexHeader;
 	GLHeader GLFragmentHeader;
@@ -798,7 +818,6 @@ protected:
 	  LIGHT_DIRECTIONAL,
 	  USE_DEPTH_FADE,
 	  USE_PHYSICAL_MAPPING,
-	  USE_ALPHA_TESTING
 	};
 
 public:
@@ -1274,31 +1293,6 @@ public:
 	}
 
 	void SetPhysicalShading( bool enable )
-	{
-		SetMacro( enable );
-	}
-};
-
-class GLCompileMacro_USE_ALPHA_TESTING :
-	GLCompileMacro
-{
-public:
-	GLCompileMacro_USE_ALPHA_TESTING(GLShader *shader) :
-		GLCompileMacro(shader)
-	{
-	}
-
-	const char *GetName() const override
-	{
-		return "USE_ALPHA_TESTING";
-	}
-
-	EGLCompileMacro GetType() const override
-	{
-		return USE_ALPHA_TESTING;
-	}
-
-	void SetAlphaTesting(bool enable)
 	{
 		SetMacro( enable );
 	}
@@ -2281,8 +2275,7 @@ class GLShader_generic2D :
 	public u_Color,
 	public u_DepthScale,
 	public GLDeformStage,
-	public GLCompileMacro_USE_DEPTH_FADE,
-	public GLCompileMacro_USE_ALPHA_TESTING
+	public GLCompileMacro_USE_DEPTH_FADE
 {
 public:
 	GLShader_generic2D( GLShaderManager *manager );
@@ -2298,7 +2291,6 @@ class GLShader_generic :
 	public u_ViewUp,
 	public u_AlphaThreshold,
 	public u_ModelMatrix,
- 	public u_ProjectionMatrixTranspose,
 	public u_ModelViewProjectionMatrix,
 	public u_InverseLightFactor,
 	public u_ColorModulate,
@@ -2312,8 +2304,7 @@ class GLShader_generic :
 	public GLCompileMacro_USE_VERTEX_SPRITE,
 	public GLCompileMacro_USE_TCGEN_ENVIRONMENT,
 	public GLCompileMacro_USE_TCGEN_LIGHTMAP,
-	public GLCompileMacro_USE_DEPTH_FADE,
-	public GLCompileMacro_USE_ALPHA_TESTING
+	public GLCompileMacro_USE_DEPTH_FADE
 {
 public:
 	GLShader_generic( GLShaderManager *manager );
@@ -2538,9 +2529,7 @@ class GLShader_skybox :
 	public u_ModelMatrix,
 	public u_ModelViewProjectionMatrix,
 	public u_InverseLightFactor,
-	public u_VertexInterpolation,
-	public GLDeformStage,
-	public GLCompileMacro_USE_ALPHA_TESTING
+	public GLDeformStage
 {
 public:
 	GLShader_skybox( GLShaderManager *manager );

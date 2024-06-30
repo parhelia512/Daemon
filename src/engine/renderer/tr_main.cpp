@@ -695,7 +695,7 @@ void R_RotateEntityForLight( const trRefEntity_t *ent, const trRefLight_t *light
 
 	if ( ent->e.reType != refEntityType_t::RT_MODEL )
 	{
-		memset( orientation , 0, sizeof( * orientation ) );
+		*orientation = {};
 
 		orientation ->axis[ 0 ][ 0 ] = 1;
 		orientation ->axis[ 1 ][ 1 ] = 1;
@@ -785,7 +785,7 @@ void R_RotateForViewer()
 {
 	matrix_t transformMatrix;
 
-	memset( &tr.orientation, 0, sizeof( tr.orientation ) );
+	tr.orientation = {};
 	tr.orientation.axis[ 0 ][ 0 ] = 1;
 	tr.orientation.axis[ 1 ][ 1 ] = 1;
 	tr.orientation.axis[ 2 ][ 2 ] = 1;
@@ -1634,7 +1634,7 @@ static bool SurfIsOffscreen( const drawSurf_t *drawSurf, screenRect_t& surfRect 
 		tr.orientation = tr.viewParms.world;
 	}
 
-	Tess_Begin( Tess_StageIteratorColor, nullptr, shader, nullptr, true, -1, 0 );
+	Tess_Begin( Tess_StageIteratorColor, shader, nullptr, true, -1, 0 );
 	rb_surfaceTable[ Util::ordinal(*drawSurf->surface) ]( drawSurf->surface );
 
 	// Tr3B: former assertion

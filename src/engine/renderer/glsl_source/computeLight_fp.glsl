@@ -35,7 +35,7 @@ uniform samplerCube u_EnvironmentMap1;
 uniform float u_EnvironmentInterpolation;
 #endif // USE_REFLECTIVE_SPECULAR
 
-#ifdef HAVE_ARB_uniform_buffer_object
+#if defined(HAVE_ARB_uniform_buffer_object)
 struct light {
   vec4  center_radius;
   vec4  color_type;
@@ -125,8 +125,9 @@ void computeDeluxeLight( vec3 lightDir, vec3 normal, vec3 viewDir, vec3 lightCol
   float G = NdotL / (NdotL * (1.0 - k) + k);
   G *= NdotV / (NdotV * (1.0 - k) + k);
 
-  color.rgb += lightColor.rgb * NdotL * diffuseColor.rgb * (1.0 - metalness);
-  color.rgb += lightColor.rgb * vec3((D * F * G) / (4.0 * NdotV));
+  vec3 diffuseBRDF = NdotL * diffuseColor.rgb * (1.0 - metalness);
+  vec3 specularBRDF = vec3((D * F * G) / max(4.0 * NdotL * NdotV, 0.0001f));
+  color.rgb += (diffuseBRDF + specularBRDF) * lightColor.rgb * NdotL;
   color.a = mix(diffuseColor.a, 1.0, FexpNV);
 #else // !USE_PHYSICAL_MAPPING
 
@@ -146,7 +147,7 @@ void computeDeluxeLight( vec3 lightDir, vec3 normal, vec3 viewDir, vec3 lightCol
 #endif // !USE_PHYSICAL_MAPPING
 }
 
-#if defined(TEXTURE_INTEGER)
+#if defined(HAVE_EXT_texture_integer) && defined(r_highPrecisionRendering)
 const int lightsPerLayer = 16;
 uniform usampler3D u_LightTiles;
 #define idxs_t uvec4
@@ -158,7 +159,7 @@ int nextIdx( inout idxs_t idxs ) {
   idxs = idxs >> 2;
   return int( tmp.x + tmp.y + tmp.z + tmp.w );
 }
-#else // !TEXTURE INTEGER
+#else // !HAVE_EXT_texture_integer
 const int lightsPerLayer = 4;
 uniform sampler3D u_LightTiles;
 #define idxs_t vec4
@@ -171,11 +172,12 @@ int nextIdx( inout idxs_t idxs ) {
   tmp -= 4.0 * idxs;
   return int( dot( tmp, vec4( 64.0, 16.0, 4.0, 1.0 ) ) );
 }
-#endif // TEXTURE_INTEGER
+#endif // HAVE_EXT_texture_integer
 
 const int numLayers = MAX_REF_LIGHTS / 256;
 
-#if defined(r_dynamicLight)
+// This code is only used by the tiled dynamic light renderer.
+#if defined(r_dynamicLight) && r_dynamicLightRenderer == 1
 void computeDynamicLight( int idx, vec3 P, vec3 normal, vec3 viewDir, vec4 diffuse,
 		    vec4 material, inout vec4 color ) {
   vec4 center_radius = GetLight( idx, center_radius );
@@ -240,7 +242,7 @@ void computeDynamicLights( vec3 P, vec3 normal, vec3 viewDir, vec4 diffuse, vec4
 #endif
     }
   }
-  
+
 #if defined(r_showLightTiles)
   if (numLights > 0.0)
   {

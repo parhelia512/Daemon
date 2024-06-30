@@ -430,25 +430,25 @@ static void DrawTris()
 
 	GLimp_LogComment( "--- DrawTris ---\n" );
 
-	tess.vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
+	bool vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
 
 	gl_genericShader->SetVertexSkinning( glConfig2.vboVertexSkinningAvailable && tess.vboVertexSkinning );
 	gl_genericShader->SetVertexAnimation( tess.vboVertexAnimation );
-	gl_genericShader->SetVertexSprite( tess.vboVertexSprite );
+	gl_genericShader->SetVertexSprite( vboVertexSprite );
 	gl_genericShader->SetTCGenEnvironment( false );
 	gl_genericShader->SetTCGenLightmap( false );
 	gl_genericShader->SetDepthFade( false );
-	gl_genericShader->SetAlphaTesting( false );
 
-	if( tess.surfaceShader->stages[0] ) {
-		deform = tess.surfaceShader->stages[0]->deformIndex;
+	if( tess.surfaceStages != tess.surfaceLastStage ) {
+		deform = tess.surfaceStages[ 0 ].deformIndex;
 	}
 
 	gl_genericShader->BindProgram( deform );
 
 	GL_State( GLS_POLYMODE_LINE | GLS_DEPTHMASK_TRUE );
 
-	//gl_genericShader->SetUniform_AlphaTest( GLS_ATEST_NONE );
+	// u_AlphaThreshold
+	gl_genericShader->SetUniform_AlphaTest( GLS_ATEST_NONE );
 
 	if ( r_showBatches->integer || r_showLightBatches->integer )
 	{
@@ -483,7 +483,7 @@ static void DrawTris()
 	// bind u_ColorMap
 	GL_BindToTMU( 0, tr.whiteImage );
 	gl_genericShader->SetUniform_TextureMatrix( tess.svars.texMatrices[ TB_COLORMAP ] );
-	gl_genericShader->SetRequiredVertexPointers();
+	gl_genericShader->SetRequiredVertexPointers( vboVertexSprite );
 
 	glDepthRange( 0, 0 );
 
@@ -503,60 +503,55 @@ to overflow.
 */
 // *INDENT-OFF*
 void Tess_Begin( void ( *stageIteratorFunc )(),
-                 void ( *stageIteratorFunc2 )(),
                  shader_t *surfaceShader, shader_t *lightShader,
                  bool skipTangentSpaces,
                  int lightmapNum,
                  int fogNum,
                  bool bspSurface )
 {
-	shader_t *state;
-
 	tess.numIndexes = 0;
 	tess.numVertexes = 0;
 	tess.attribsSet = 0;
 	tess.multiDrawPrimitives = 0;
 
-	// materials are optional
-	if ( surfaceShader != nullptr )
-	{
-		state = ( surfaceShader->remappedShader ) ? surfaceShader->remappedShader : surfaceShader;
-
-		tess.surfaceShader = state;
-		tess.surfaceStages = state->stages;
-		tess.numSurfaceStages = state->numStages;
-
-		Tess_MapVBOs( false );
-	}
-	else
-	{
-		state = nullptr;
-
-		tess.numSurfaceStages = 0;
-		tess.surfaceShader = nullptr;
-		tess.surfaceStages = nullptr;
-		Tess_MapVBOs( false );
-	}
-
-	tess.lightShader = lightShader;
-
 	tess.stageIteratorFunc = stageIteratorFunc;
-	tess.stageIteratorFunc2 = stageIteratorFunc2;
 
-	if ( !tess.stageIteratorFunc )
-	{
-		Sys::Error( "tess.stageIteratorFunc == NULL" );
-	}
-
-	if ( state != nullptr && state->isSky )
-	{
-		tess.stageIteratorFunc = &Tess_StageIteratorSky;
-	}
+	tess.surfaceShader = surfaceShader;
+	tess.lightShader = lightShader;
 
 	tess.skipTangentSpaces = skipTangentSpaces;
 	tess.lightmapNum = lightmapNum;
 	tess.fogNum = fogNum;
 	tess.bspSurface = bspSurface;
+
+	// materials are optional (some debug drawing code doesn't use them)
+	if ( tess.surfaceShader )
+	{
+		if ( tess.surfaceShader->remappedShader )
+		{
+			tess.surfaceShader = surfaceShader->remappedShader;
+		}
+
+		if ( tess.surfaceShader->isSky )
+		{
+			tess.stageIteratorFunc = &Tess_StageIteratorSky;
+		}
+
+		tess.surfaceStages = tess.surfaceShader->stages;
+		tess.surfaceLastStage = tess.surfaceShader->lastStage;
+	}
+	else
+	{
+		tess.surfaceStages = nullptr;
+		tess.surfaceLastStage = nullptr;
+	}
+
+	Tess_MapVBOs( false );
+
+	if ( !tess.stageIteratorFunc )
+	{
+		Sys::Error( "tess.stageIteratorFunc == NULL" );
+	}
 
 	if ( r_logFile->integer )
 	{
@@ -628,23 +623,16 @@ static void Render_generic2D( shaderStage_t *pStage )
 
 	bool hasDepthFade = pStage->hasDepthFade && !tess.surfaceShader->autoSpriteMode;
 	bool needDepthMap = pStage->hasDepthFade || tess.surfaceShader->autoSpriteMode;
-	tess.vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
-	uint32_t alphaTestBits = pStage->stateBits & GLS_ATEST_BITS;
+	bool vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
 
 	// choose right shader program ----------------------------------
-
 	gl_generic2DShader->SetDepthFade( hasDepthFade );
-	gl_generic2DShader->SetAlphaTesting(alphaTestBits != 0);
-
 	gl_generic2DShader->BindProgram( pStage->deformIndex );
 	// end choose right shader program ------------------------------
 
 	// set uniforms
-	// u_AlphaTest
-	if (alphaTestBits != 0)
-	{
-		gl_generic2DShader->SetUniform_AlphaTest(pStage->stateBits);
-	}
+	// u_AlphaThreshold
+	gl_generic2DShader->SetUniform_AlphaTest( pStage->stateBits );
 
 	// u_ColorModulate
 	colorGen_t rgbGen;
@@ -666,7 +654,10 @@ static void Render_generic2D( shaderStage_t *pStage )
 	BindAnimatedImage( &pStage->bundle[ TB_COLORMAP ] );
 	gl_generic2DShader->SetUniform_TextureMatrix( tess.svars.texMatrices[ TB_COLORMAP ] );
 
-	glEnable( GL_DEPTH_CLAMP );
+	if ( glConfig2.depthClampAvailable )
+	{
+		glEnable( GL_DEPTH_CLAMP );
+	}
 
 	if ( hasDepthFade )
 	{
@@ -678,11 +669,14 @@ static void Render_generic2D( shaderStage_t *pStage )
 		GL_BindToTMU( 1, tr.currentDepthImage );
 	}
 
-	gl_generic2DShader->SetRequiredVertexPointers();
+	gl_generic2DShader->SetRequiredVertexPointers( vboVertexSprite );
 
 	Tess_DrawElements();
 
-	glDisable( GL_DEPTH_CLAMP );
+	if ( glConfig2.depthClampAvailable )
+	{
+		glDisable( GL_DEPTH_CLAMP );
+	}
 
 	GL_CheckErrors();
 }
@@ -697,35 +691,28 @@ void Render_generic3D( shaderStage_t *pStage )
 
 	bool hasDepthFade = pStage->hasDepthFade && !tess.surfaceShader->autoSpriteMode;
 	bool needDepthMap = pStage->hasDepthFade || tess.surfaceShader->autoSpriteMode;
-	tess.vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
-	uint32_t alphaTestBits = pStage->stateBits & GLS_ATEST_BITS;
+	bool vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
 
 	// choose right shader program ----------------------------------
 	gl_genericShader->SetVertexSkinning( glConfig2.vboVertexSkinningAvailable && tess.vboVertexSkinning );
 	gl_genericShader->SetVertexAnimation( tess.vboVertexAnimation );
-
 	gl_genericShader->SetTCGenEnvironment( pStage->tcGen_Environment );
 	gl_genericShader->SetTCGenLightmap( pStage->tcGen_Lightmap );
 	gl_genericShader->SetDepthFade( hasDepthFade );
-	gl_genericShader->SetVertexSprite( tess.vboVertexSprite );
-	gl_genericShader->SetAlphaTesting(alphaTestBits != 0);
-
+	gl_genericShader->SetVertexSprite( vboVertexSprite );
 	gl_genericShader->BindProgram( pStage->deformIndex );
 	// end choose right shader program ------------------------------
 
 	// set uniforms
-	if ( pStage->tcGen_Environment || tess.vboVertexSprite )
+	if ( pStage->tcGen_Environment || vboVertexSprite )
 	{
 		// calculate the environment texcoords in object space
 		gl_genericShader->SetUniform_ViewOrigin( backEnd.orientation.viewOrigin );
 		gl_genericShader->SetUniform_ViewUp( backEnd.orientation.axis[ 2 ] );
 	}
 
-	// u_AlphaTest
-	if (alphaTestBits != 0)
-	{
-		gl_genericShader->SetUniform_AlphaTest(pStage->stateBits);
-	}
+	// u_AlphaThreshold
+	gl_genericShader->SetUniform_AlphaTest( pStage->stateBits );
 
 	// u_InverseLightFactor
 	// We should cancel overbrightBits if there is no light,
@@ -785,7 +772,7 @@ void Render_generic3D( shaderStage_t *pStage )
 		GL_BindToTMU( 1, tr.currentDepthImage );
 	}
 
-	gl_genericShader->SetRequiredVertexPointers();
+	gl_genericShader->SetRequiredVertexPointers( vboVertexSprite );
 
 	Tess_DrawElements();
 
@@ -848,7 +835,8 @@ void Render_lightMapping( shaderStage_t *pStage )
 	specific use case. Without knowing which use case this takes care about,
 	any change in the following code may break it. Or it may be a hack we
 	should drop if it is for a bug we don't have anymore. */
-	bool hack = tess.numSurfaceStages > 0 && tess.surfaceStages[0]->rgbGen == colorGen_t::CGEN_VERTEX;
+	bool hack = tess.surfaceLastStage != tess.surfaceStages
+		&& tess.surfaceStages[ 0 ].rgbGen == colorGen_t::CGEN_VERTEX;
 
 	if ( ( tess.surfaceShader->surfaceFlags & SURF_NOLIGHTMAP ) && !hack )
 	{
@@ -952,10 +940,12 @@ void Render_lightMapping( shaderStage_t *pStage )
 
 	DAEMON_ASSERT( !( enableDeluxeMapping && enableGridDeluxeMapping ) );
 
+	// Not implemented yet in PBR code.
+	bool enableReflectiveSpecular = pStage->enableSpecularMapping && tr.cubeHashTable != nullptr;
+
 	GL_State( stateBits );
 
 	// choose right shader program ----------------------------------
-	tess.vboVertexSprite = false;
 
 	gl_lightMappingShader->SetVertexSkinning( glConfig2.vboVertexSkinningAvailable && tess.vboVertexSkinning );
 
@@ -973,7 +963,7 @@ void Render_lightMapping( shaderStage_t *pStage )
 
 	gl_lightMappingShader->SetReliefMapping( pStage->enableReliefMapping );
 
-	gl_lightMappingShader->SetReflectiveSpecular( pStage->enableNormalMapping && tr.cubeHashTable != nullptr );
+	gl_lightMappingShader->SetReflectiveSpecular( enableReflectiveSpecular );
 
 	gl_lightMappingShader->SetPhysicalShading( pStage->enablePhysicalMapping );
 
@@ -1049,7 +1039,7 @@ void Render_lightMapping( shaderStage_t *pStage )
 	// u_Color
 	gl_lightMappingShader->SetUniform_Color( tess.svars.color );
 
-	// u_AlphaTest
+	// u_AlphaThreshold
 	gl_lightMappingShader->SetUniform_AlphaTest( pStage->stateBits );
 
 	// bind u_HeightMap
@@ -1105,8 +1095,7 @@ void Render_lightMapping( shaderStage_t *pStage )
 		gl_lightMappingShader->SetUniform_SpecularExponent( specExpMin, specExpMax );
 	}
 
-	// specular reflection
-	if ( tr.cubeHashTable != nullptr )
+	if ( enableReflectiveSpecular )
 	{
 		cubemapProbe_t *cubeProbeNearest;
 		cubemapProbe_t *cubeProbeSecondNearest;
@@ -1255,6 +1244,7 @@ static void Render_shadowFill( shaderStage_t *pStage )
 		gl_shadowFillShader->SetUniform_Color( Color::Color::Indexed( backEnd.pc.c_batches % 8 ) );
 	}
 
+	// u_AlphaThreshold
 	gl_shadowFillShader->SetUniform_AlphaTest( pStage->stateBits );
 
 	if ( backEnd.currentLight->l.rlType != refLightType_t::RL_DIRECTIONAL )
@@ -1333,6 +1323,7 @@ static void Render_forwardLighting_DBS_omni( shaderStage_t *pStage,
 	// u_Color
 	gl_forwardLightingShader_omniXYZ->SetUniform_Color( tess.svars.color );
 
+	// u_AlphaThreshold
 	gl_forwardLightingShader_omniXYZ->SetUniform_AlphaTest( pStage->stateBits );
 
 	// u_InverseLightFactor
@@ -1498,6 +1489,7 @@ static void Render_forwardLighting_DBS_proj( shaderStage_t *pStage,
 	// u_Color
 	gl_forwardLightingShader_projXYZ->SetUniform_Color( tess.svars.color );
 
+	// u_AlphaThreshold
 	gl_forwardLightingShader_projXYZ->SetUniform_AlphaTest( pStage->stateBits );
 
 	// u_InverseLightFactor
@@ -1662,6 +1654,7 @@ static void Render_forwardLighting_DBS_directional( shaderStage_t *pStage, trRef
 	// u_Color
 	gl_forwardLightingShader_directionalSun->SetUniform_Color( tess.svars.color );
 
+	// u_AlphaThreshold
 	gl_forwardLightingShader_directionalSun->SetUniform_AlphaTest( pStage->stateBits );
 
 	// u_InverseLightFactor
@@ -1906,6 +1899,9 @@ void Render_skybox( shaderStage_t *pStage )
 	// bind u_ColorMap
 	GL_BindToTMU( 0, pStage->bundle[ TB_COLORMAP ].image[ 0 ] );
 
+	// u_AlphaThreshold
+	gl_skyboxShader->SetUniform_AlphaTest( GLS_ATEST_NONE );
+
 	// u_InverseLightFactor
 	gl_skyboxShader->SetUniform_InverseLightFactor( tr.mapInverseLightFactor );
 
@@ -1985,19 +1981,14 @@ void Render_heatHaze( shaderStage_t *pStage )
 	// choose right shader program ----------------------------------
 	gl_heatHazeShader->SetVertexSkinning( glConfig2.vboVertexSkinningAvailable && tess.vboVertexSkinning );
 	gl_heatHazeShader->SetVertexAnimation( glState.vertexAttribsInterpolation > 0 );
-	if( tess.surfaceShader->autoSpriteMode ) {
-		gl_heatHazeShader->SetVertexSprite( true );
-		tess.vboVertexSprite = true;
-	} else {
-		gl_heatHazeShader->SetVertexSprite( false );
-		tess.vboVertexSprite = false;
-	}
+	bool vboVertexSprite = tess.surfaceShader->autoSpriteMode != 0;
+	gl_heatHazeShader->SetVertexSprite( vboVertexSprite );
 
 	gl_heatHazeShader->BindProgram( pStage->deformIndex );
 	// end choose right shader program ------------------------------
 
 	// set uniforms
-	if ( tess.vboVertexSprite )
+	if ( vboVertexSprite )
 	{
 		// calculate the environment texcoords in object space
 		gl_heatHazeShader->SetUniform_ViewOrigin( backEnd.orientation.viewOrigin );
@@ -2050,7 +2041,7 @@ void Render_heatHaze( shaderStage_t *pStage )
 	// bind u_CurrentMap
 	GL_BindToTMU( 1, tr.currentRenderImage[ backEnd.currentMainFBO ] );
 
-	gl_heatHazeShader->SetRequiredVertexPointers();
+	gl_heatHazeShader->SetRequiredVertexPointers( vboVertexSprite );
 
 	Tess_DrawElements();
 
@@ -2586,10 +2577,8 @@ void Tess_StageIteratorColor()
 	}
 
 	// call shader function
-	for ( int stage = 0; stage < tess.numSurfaceStages; stage++ )
+	for ( shaderStage_t *pStage = tess.surfaceStages; pStage < tess.surfaceLastStage; pStage++ )
 	{
-		shaderStage_t *pStage = tess.surfaceStages[ stage ];
-
 		if ( !RB_EvalExpression( &pStage->ifExp, 1.0 ) )
 		{
 			continue;
@@ -2636,9 +2625,8 @@ void Tess_StageIteratorPortal() {
 		GL_Cull( tess.surfaceShader->cullType );
 
 	// call shader function
-	for ( int stage = 0; stage < tess.numSurfaceStages; stage++ ) {
-		shaderStage_t* pStage = tess.surfaceStages[stage];
-
+	for ( shaderStage_t *pStage = tess.surfaceStages; pStage < tess.surfaceLastStage; pStage++ )
+	{
 		if ( !RB_EvalExpression( &pStage->ifExp, 1.0 ) ) {
 			continue;
 		}
@@ -2680,10 +2668,8 @@ void Tess_StageIteratorShadowFill()
 	}
 
 	// call shader function
-	for ( int stage = 0; stage < tess.numSurfaceStages; stage++ )
+	for ( shaderStage_t *pStage = tess.surfaceStages; pStage < tess.surfaceLastStage; pStage++ )
 	{
-		shaderStage_t *pStage = tess.surfaceStages[ stage ];
-
 		if ( !RB_EvalExpression( &pStage->ifExp, 1.0 ) )
 		{
 			continue;
@@ -2704,8 +2690,6 @@ void Tess_StageIteratorShadowFill()
 void Tess_StageIteratorLighting()
 {
 	trRefLight_t  *light;
-	shaderStage_t *attenuationXYStage;
-	shaderStage_t *attenuationZStage;
 
 	// log this call
 	if ( r_logFile->integer )
@@ -2757,12 +2741,10 @@ void Tess_StageIteratorLighting()
 	}
 
 	// call shader function
-	attenuationZStage = tess.lightShader->stages[ 0 ];
+	shaderStage_t *attenuationZStage = &tess.lightShader->stages[ 0 ];
 
-	for ( int i = 0; i < tess.numSurfaceStages; i++ )
+	for ( shaderStage_t *pStage = tess.surfaceStages; pStage < tess.surfaceLastStage; pStage++ )
 	{
-		shaderStage_t *pStage = tess.surfaceStages[ i ];
-
 		if ( !RB_EvalExpression( &pStage->ifExp, 1.0 ) )
 		{
 			continue;
@@ -2770,10 +2752,10 @@ void Tess_StageIteratorLighting()
 
 		Tess_ComputeTexMatrices( pStage );
 
-		for ( int j = 1; j < tess.lightShader->numStages; j++ )
+		for ( shaderStage_t *attenuationXYStage = tess.lightShader->stages;
+			attenuationXYStage < tess.lightShader->lastStage;
+			attenuationXYStage++ )
 		{
-			attenuationXYStage = tess.lightShader->stages[ j ];
-
 			if ( attenuationXYStage->type != stageType_t::ST_ATTENUATIONMAP_XY )
 			{
 				continue;

@@ -84,11 +84,14 @@ struct glconfig2_t
 	bool textureFloatAvailable;
 	bool textureIntegerAvailable;
 	bool textureRGAvailable;
+	bool computeShaderAvailable;
 	bool gpuShader4Available;
+	bool gpuShader5Available;
 	bool textureGatherAvailable;
 	int      maxDrawBuffers;
 
 	float    maxTextureAnisotropy;
+	float textureAnisotropy;
 	bool textureAnisotropyAvailable;
 
 	int      maxRenderbufferSize;
@@ -99,6 +102,7 @@ struct glconfig2_t
 	bool uniformBufferObjectAvailable;
 	bool mapBufferRangeAvailable;
 	bool syncAvailable;
+	bool depthClampAvailable;
 
 	bool dynamicLight;
 	bool staticLight;

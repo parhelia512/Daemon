@@ -677,7 +677,6 @@ void CL_LocalServers_f()
 {
 	const char *message;
 	int      i, j;
-	netadr_t to;
 
 	serverInfoLog.Verbose( "Scanning for servers on the local network…" );
 
@@ -688,11 +687,11 @@ void CL_LocalServers_f()
 	for ( i = 0; i < MAX_OTHER_SERVERS; i++ )
 	{
 		bool b = cls.localServers[ i ].visible;
-		memset( &cls.localServers[ i ], 0, sizeof( cls.localServers[ i ] ) );
+		cls.localServers[ i ] = {};
 		cls.localServers[ i ].visible = b;
 	}
 
-	memset( &to, 0, sizeof( to ) );
+	netadr_t to{};
 
 	// The 'xxx' in the message is a challenge that will be echoed back
 	// by the server.  We don't care about that here, but master servers
@@ -760,7 +759,7 @@ void CL_GlobalServers_f()
 			continue;
 		}
 
-		sprintf( command, "sv_master%d", masterNum + 1 );
+		Com_sprintf( command, sizeof( command ), "sv_master%d", masterNum + 1 );
 		masteraddress = Cvar_VariableString( command );
 
 		if ( !*masteraddress )
@@ -870,6 +869,7 @@ static void CL_ClearPing( int n )
 	}
 
 	cl_pinglist[ n ].adr.port = 0;
+	cl_pinglist[ n ].info[ 0 ] = '\0';
 }
 
 /*
@@ -953,7 +953,6 @@ CL_Ping_f
 */
 void CL_Ping_f()
 {
-	netadr_t     to;
 	ping_t        *pingptr;
 	const char   *server;
 	int          argc;
@@ -989,7 +988,7 @@ void CL_Ping_f()
 		server = Cmd_Argv( 2 );
 	}
 
-	memset( &to, 0, sizeof( netadr_t ) );
+	netadr_t to{};
 
 	if ( !NET_StringToAdr( server, &to, family ) )
 	{
@@ -998,7 +997,7 @@ void CL_Ping_f()
 
 	pingptr = &CL_GetFreePing();
 
-	memcpy( &pingptr->adr, &to, sizeof( netadr_t ) );
+	pingptr->adr = to;
 	pingptr->start = Sys::Milliseconds();
 	pingptr->time = -1;
 	GeneratePingChallenge( *pingptr );

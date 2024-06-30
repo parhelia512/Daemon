@@ -41,6 +41,7 @@ static char          *s_shaderText;
 // dynamically allocated memory if it is valid.
 static shaderTable_t table;
 static std::array<shaderStage_t, MAX_SHADER_STAGES> stages;
+static size_t numStages;
 static shader_t      shader;
 static texModInfo_t  texMods[ MAX_SHADER_STAGES ][ TR_MAX_TEXMODS ];
 
@@ -4738,9 +4739,9 @@ SHADER OPTIMIZATION AND FOGGING
 // Group all active stages to the begining of the array.
 static void GroupActiveStages()
 {
-	int numActiveStages = 0;
+	size_t numActiveStages = 0;
 
-	for ( int i = 0; i < shader.numStages; i++ )
+	for ( size_t i = 0; i < numStages; i++ )
 	{
 		if ( !stages[ i ].active )
 		{
@@ -4757,7 +4758,7 @@ static void GroupActiveStages()
 		numActiveStages++;
 	}
 
-	shader.numStages = numActiveStages;
+	numStages = numActiveStages;
 }
 
 /*
@@ -5147,7 +5148,7 @@ static void FinishStages()
 	bool shaderHasNoLight = true;
 	bool lightStageFound = false;
 
-	for ( int s = 0; s < shader.numStages; s++ )
+	for ( size_t s = 0; s < numStages; s++ )
 	{
 		shaderStage_t *stage = &stages[ s ];
 
@@ -5212,7 +5213,7 @@ static void FinishStages()
 
 	GroupActiveStages();
 
-	for ( int s = 0; s < shader.numStages; s++ )
+	for ( size_t s = 0; s < numStages; s++ )
 	{
 		shaderStage_t *stage = &stages[ s ];
 
@@ -5222,6 +5223,13 @@ static void FinishStages()
 
 		// We should cancel overBrightBits if there is no light stage.
 		stage->shaderHasNoLight = shaderHasNoLight;
+
+		// We should not cancel overbright on decals.
+		if ( shader.sort == Util::ordinal(shaderSort_t::SS_DECAL) )
+		{
+			// HACK: Reuse that boolean.
+			stage->shaderHasNoLight = false;
+		}
 
 		// Available textures.
 		bool hasNormalMap = stage->bundle[ TB_NORMALMAP ].image[ 0 ] != nullptr;
@@ -5343,7 +5351,7 @@ static void SetStagesRenderers()
 		bool doForwardLighting;
 	};
 
-	for ( int s = 0; s < shader.numStages; s++ )
+	for ( size_t s = 0; s < numStages; s++ )
 	{
 		shaderStage_t *stage = &stages[ s ];
 
@@ -5452,17 +5460,13 @@ static void SortNewShader()
 // Copy the current global shader to a newly allocated shader.
 static shader_t *MakeShaderPermanent()
 {
-	shader_t *newShader;
-	int      i, b;
-	int      size, hash;
-
 	if ( tr.numShaders == MAX_SHADERS )
 	{
 		Log::Warn("MakeShaderPermanent - MAX_SHADERS hit" );
 		return tr.defaultShader;
 	}
 
-	newShader = (shader_t*) ri.Hunk_Alloc( sizeof( shader_t ), ha_pref::h_low );
+	shader_t *newShader = (shader_t*) ri.Hunk_Alloc( sizeof( shader_t ), ha_pref::h_low );
 
 	*newShader = shader;
 
@@ -5483,27 +5487,27 @@ static shader_t *MakeShaderPermanent()
 
 	tr.numShaders++;
 
-	for ( i = 0; i < newShader->numStages; i++ )
+	ASSERT( numStages <= MAX_SHADER_STAGES );
+
+	newShader->stages = (shaderStage_t*) ri.Hunk_Alloc( sizeof( shaderStage_t ) * numStages, ha_pref::h_low );
+	std::copy_n( stages.data(), numStages, newShader->stages );
+
+	for ( size_t s = 0; s < numStages; s++ )
 	{
-		if ( !stages[ i ].active )
+		for ( size_t b = 0; b < MAX_TEXTURE_BUNDLES; b++ )
 		{
-			break;
-		}
-
-		newShader->stages[ i ] = (shaderStage_t*) ri.Hunk_Alloc( sizeof( stages[ i ] ), ha_pref::h_low );
-		*newShader->stages[ i ] = stages[ i ];
-
-		for ( b = 0; b < MAX_TEXTURE_BUNDLES; b++ )
-		{
-			size = newShader->stages[ i ]->bundle[ b ].numTexMods * sizeof( texModInfo_t );
-			newShader->stages[ i ]->bundle[ b ].texMods = (texModInfo_t*) ri.Hunk_Alloc( size, ha_pref::h_low );
-			memcpy( newShader->stages[ i ]->bundle[ b ].texMods, stages[ i ].bundle[ b ].texMods, size );
+			size_t size = newShader->stages[ s ].bundle[ b ].numTexMods * sizeof( texModInfo_t );
+			newShader->stages[ s ].bundle[ b ].texMods = (texModInfo_t*) ri.Hunk_Alloc( size, ha_pref::h_low );
+			std::copy_n( stages[ s ].bundle[ b ].texMods, newShader->stages[ s ].bundle[ b ].numTexMods,
+			             newShader->stages[ s ].bundle[ b ].texMods );
 		}
 	}
 
+	newShader->lastStage = newShader->stages + numStages;
+
 	SortNewShader();
 
-	hash = generateHashValue( newShader->name, FILE_HASH_SIZE );
+	int hash = generateHashValue( newShader->name, FILE_HASH_SIZE );
 	newShader->next = shaderHashTable[ hash ];
 	shaderHashTable[ hash ] = newShader;
 
@@ -5643,17 +5647,13 @@ static shader_t *FinishShader()
 		}
 	}
 
-	int stage;
+	numStages = MAX_SHADER_STAGES;
+	GroupActiveStages();
 
 	// set appropriate stage information
-	for ( stage = 0; stage < MAX_SHADER_STAGES; stage++ )
+	for ( size_t stage = 0; stage < numStages; stage++ )
 	{
 		shaderStage_t *pStage = &stages[ stage ];
-
-		if ( !pStage->active )
-		{
-			break;
-		}
 
 		if ( !shader.isSky )
 		{
@@ -5859,7 +5859,7 @@ static shader_t *FinishShader()
 		}
 	}
 
-	shader.numStages = stage;
+	GroupActiveStages();
 
 	// there are times when you will need to manually apply a sort to
 	// opaque alpha tested shaders that have later blend passes
@@ -5885,7 +5885,7 @@ static shader_t *FinishShader()
 	}
 
 	// fogonly shaders don't have any stage passes
-	if ( shader.numStages == 0 && !shader.isSky )
+	if ( numStages == 0 && !shader.isSky )
 	{
 		shader.sort = Util::ordinal(shaderSort_t::SS_FOG);
 	}
@@ -5904,14 +5904,14 @@ static shader_t *FinishShader()
 
 	// generate depth-only shader if necessary
 	if( !shader.isSky &&
-	    shader.numStages > 0 &&
+	    numStages > 0 &&
 	    (stages[0].stateBits & GLS_DEPTHMASK_TRUE) &&
 	    !(stages[0].stateBits & GLS_DEPTHFUNC_EQUAL) &&
 	    !(shader.type == shaderType_t::SHADER_2D) &&
 	    !shader.polygonOffset ) {
 		// keep only the first stage
 		stages[1].active = false;
-		shader.numStages = 1;
+		numStages = 1;
 
 		const char* depthShaderSuffix = "$depth";
 
@@ -5961,8 +5961,9 @@ static shader_t *FinishShader()
 			// Copy the current global shader to a newly allocated shader.
 			ret->depthShader = MakeShaderPermanent();
 		}
+
 		// disable depth writes in the main pass
-		ret->stages[0]->stateBits &= ~GLS_DEPTHMASK_TRUE;
+		ret->stages[0].stateBits &= ~GLS_DEPTHMASK_TRUE;
 	} else {
 		ret->depthShader = nullptr;
 	}
@@ -6187,6 +6188,7 @@ static void ClearGlobalShader()
 {
 	ResetStruct( shader );
 	ResetStruct( stages );
+	numStages = 0;
 }
 
 /*
@@ -6661,8 +6663,8 @@ void R_ListShaders_f()
 	Log::CommandInteractionMessage( lineStream.str() );
 	Log::CommandInteractionMessage( lineSeparator );
 
-	int stageCount = 0;
-	uint8_t highestShaderStageCount = 0;
+	size_t totalStageCount = 0;
+	size_t highestShaderStageCount = 0;
 
 	for ( int i = 0; i < tr.numShaders; i++ )
 	{
@@ -6673,9 +6675,6 @@ void R_ListShaders_f()
 		{
 			continue;
 		}
-
-		stageCount += shader->numStages;
-		highestShaderStageCount = std::max( highestShaderStageCount, shader->numStages );
 
 		if ( !shaderTypeName.count( shader->type ) )
 		{
@@ -6701,9 +6700,30 @@ void R_ListShaders_f()
 		shaderName = shader->name;
 		shaderName += shader->defaultShader ? " (DEFAULTED)" : "";
 
-		for ( int j = 0; j < shader->numStages; j++ )
+		if ( shader->stages == shader->lastStage )
 		{
-			shaderStage_t *stage = shader->stages[ j ];
+			lineStream.clear();
+			lineStream.str("");
+
+			lineStream << std::left;
+			lineStream << std::setw(numLen) << i << separator;
+			lineStream << std::setw(shaderTypeLen) << shaderType << separator;
+			lineStream << std::setw(shaderSortLen) << shaderSort << separator;
+			lineStream << std::setw(stageTypeLen) << stageType << separator;
+			lineStream << std::setw(interactLightLen) << interactLight << separator;
+			lineStream << "-:" << shaderName;
+
+			Log::CommandInteractionMessage( lineStream.str() );
+			continue;
+		}
+
+		const size_t stageCount = shader->lastStage - shader->stages;
+		totalStageCount += stageCount;
+		highestShaderStageCount = std::max( highestShaderStageCount, stageCount );
+
+		for ( size_t j = 0; j < stageCount; j++ )
+		{
+			shaderStage_t *stage = &shader->stages[ j ];
 
 			if ( !stageTypeName.count( stage->type ) )
 			{
@@ -6732,7 +6752,7 @@ void R_ListShaders_f()
 
 	std::string summary = Str::Format(
 		"%i total shaders, %i total stages, largest shader has %i stages",
-		tr.numShaders, stageCount, highestShaderStageCount );
+		tr.numShaders, totalStageCount, highestShaderStageCount );
 
 	Log::CommandInteractionMessage( lineSeparator );
 	Log::CommandInteractionMessage( summary );
@@ -6927,7 +6947,7 @@ static void ScanAndLoadShaderFiles()
 			bool      alreadyCreated;
 
 			// zeroes shader table, booleans can be assumed as false
-			memset( &table, 0, sizeof( table ) );
+			table = {};
 
 			token = COM_ParseExt2( &p, true );
 

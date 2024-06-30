@@ -110,19 +110,6 @@ void GL_TextureMode( const char *string )
 	gl_filter_min = modes[ i ].minimize;
 	gl_filter_max = modes[ i ].maximize;
 
-	// bound texture anisotropy
-	if ( glConfig2.textureAnisotropyAvailable )
-	{
-		if ( r_ext_texture_filter_anisotropic->value > glConfig2.maxTextureAnisotropy )
-		{
-			Cvar_Set( "r_ext_texture_filter_anisotropic", va( "%f", glConfig2.maxTextureAnisotropy ) );
-		}
-		else if ( r_ext_texture_filter_anisotropic->value < 1.0f )
-		{
-			Cvar_Set( "r_ext_texture_filter_anisotropic", "1.0" );
-		}
-	}
-
 	// change all the existing mipmap texture objects
 	for ( image_t *image : tr.images )
 	{
@@ -137,7 +124,7 @@ void GL_TextureMode( const char *string )
 			// set texture anisotropy
 			if ( glConfig2.textureAnisotropyAvailable )
 			{
-				glTexParameterf( image->type, GL_TEXTURE_MAX_ANISOTROPY_EXT, r_ext_texture_filter_anisotropic->value );
+				glTexParameterf( image->type, GL_TEXTURE_MAX_ANISOTROPY_EXT, glConfig2.textureAnisotropy );
 			}
 		}
 	}
@@ -217,7 +204,7 @@ void R_ListImages_f()
 	// Header names
 	std::string num = "num";
 	std::string width = "width";
-	std::string height = "heigth";
+	std::string height = "height";
 	std::string layers = "layers";
 	std::string mm = "mm";
 	std::string type = "type";
@@ -1122,7 +1109,7 @@ void R_UploadImage( const byte **dataArray, int numLayers, int numMips, image_t 
 			// set texture anisotropy
 			if ( glConfig2.textureAnisotropyAvailable )
 			{
-				glTexParameterf( image->type, GL_TEXTURE_MAX_ANISOTROPY_EXT, r_ext_texture_filter_anisotropic->value );
+				glTexParameterf( image->type, GL_TEXTURE_MAX_ANISOTROPY_EXT, glConfig2.textureAnisotropy );
 			}
 
 			glTexParameterf( image->type, GL_TEXTURE_MIN_FILTER, gl_filter_min );
@@ -1298,7 +1285,7 @@ image_t        *R_AllocImage( const char *name, bool linkIntoHashTable )
 	}
 
 	image = (image_t*) ri.Hunk_Alloc( sizeof( image_t ), ha_pref::h_low );
-	memset( image, 0, sizeof( image_t ) );
+	*image = {};
 
 	glGenTextures( 1, &image->texnum );
 
@@ -2403,7 +2390,7 @@ static void R_CreateCurrentRenderImage()
 	imageParams_t imageParams = {};
 	imageParams.bits = IF_NOPICMIP;
 
-	if ( glConfig2.textureFloatAvailable && r_highPrecisionRendering.Get() )
+	if ( r_highPrecisionRendering.Get() )
 	{
 		imageParams.bits |= IF_RGBA16;
 	}
@@ -2424,6 +2411,8 @@ static void R_CreateCurrentRenderImage()
 
 static void R_CreateDepthRenderImage()
 {
+	ASSERT( glConfig2.textureFloatAvailable );
+
 	if ( !glConfig2.dynamicLight )
 	{
 		return;
@@ -2437,7 +2426,9 @@ static void R_CreateDepthRenderImage()
 		imageParams_t imageParams = {};
 		imageParams.filterType = filterType_t::FT_NEAREST;
 		imageParams.wrapType = wrapTypeEnum_t::WT_CLAMP;
-		imageParams.bits = IF_NOPICMIP | IF_RGBA32F;
+
+		imageParams.bits = IF_NOPICMIP;
+		imageParams.bits |= r_highPrecisionRendering.Get() ? IF_RGBA32F : IF_RGBA16F;
 
 		tr.dlightImage = R_CreateImage("_dlightImage", nullptr, w, h, 4, imageParams );
 	}
@@ -2466,9 +2457,11 @@ static void R_CreateDepthRenderImage()
 		int h = (height + TILE_SIZE_STEP1 - 1) >> TILE_SHIFT_STEP1;
 
 		imageParams_t imageParams = {};
-		imageParams.bits = IF_NOPICMIP | IF_RGBA32F;
 		imageParams.filterType = filterType_t::FT_NEAREST;
 		imageParams.wrapType = wrapTypeEnum_t::WT_ONE_CLAMP;
+
+		imageParams.bits = IF_NOPICMIP;
+		imageParams.bits |= r_highPrecisionRendering.Get() ? IF_RGBA32F : IF_RGBA16F;
 
 		tr.depthtile1RenderImage = R_CreateImage( "_depthtile1Render", nullptr, w, h, 1, imageParams );
 
@@ -2479,18 +2472,14 @@ static void R_CreateDepthRenderImage()
 
 		tr.depthtile2RenderImage = R_CreateImage( "_depthtile2Render", nullptr, w, h, 1, imageParams );
 
-		if ( glConfig2.textureIntegerAvailable )
-		{
-			imageParams.bits = IF_NOPICMIP | IF_RGBA32UI;
+		imageParams.bits = IF_NOPICMIP;
 
-			tr.lighttileRenderImage = R_Create3DImage( "_lighttileRender", nullptr, w, h, 4, imageParams );
-		}
-		else
+		if ( glConfig2.textureIntegerAvailable && r_highPrecisionRendering.Get() )
 		{
-			imageParams.bits = IF_NOPICMIP;
-
-			tr.lighttileRenderImage = R_Create3DImage( "_lighttileRender", nullptr, w, h, 4, imageParams );
+			imageParams.bits |= IF_RGBA32UI;
 		}
+
+		tr.lighttileRenderImage = R_Create3DImage( "_lighttileRender", nullptr, w, h, 4, imageParams );
 	}
 }
 
@@ -2540,6 +2529,7 @@ static void R_CreateShadowMapFBOImage()
 	int numFactor = 1;
 	int format = IF_NOPICMIP;
 
+	// FIXME: We should test if those formats are supported.
 	switch( glConfig2.shadowingMode )
 	{
 		case shadowingMode_t::SHADOWING_ESM16:
@@ -2623,6 +2613,7 @@ static void R_CreateShadowCubeFBOImage()
 
 	int format = IF_NOPICMIP;
 
+	// FIXME: We should test if those formats are supported.
 	switch( glConfig2.shadowingMode )
 	{
 		case shadowingMode_t::SHADOWING_ESM16:
@@ -3016,7 +3007,7 @@ void RE_GetTextureSize( int textureID, int *width, int *height )
 		return;
 	}
 
-	baseImage = shader->stages[ 0 ]->bundle[ 0 ].image[ 0 ];
+	baseImage = shader->stages[ 0 ].bundle[ 0 ].image[ 0 ];
 	if ( !baseImage )
 	{
 		Log::Debug( "%sRE_GetTextureSize: shader %s is missing base image",

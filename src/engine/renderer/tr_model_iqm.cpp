@@ -458,14 +458,9 @@ bool R_LoadIQModel( model_t *mod, const void *buffer, int filesize,
 	IQModel_t		*IQModel;
 	IQAnim_t		*IQAnim;
 	srfIQModel_t		*surface;
-	vboData_t               vboData;
-	float                   *weightbuf;
-	int                     *indexbuf;
-	i16vec4_t               *qtangentbuf;
 	VBO_t                   *vbo;
 	IBO_t                   *ibo;
 	void                    *ptr;
-	u8vec4_t                *weights;
 
 	if( !LoadIQMFile( buffer, filesize, mod_name, &len_names ) ) {
 		return false;
@@ -685,6 +680,8 @@ bool R_LoadIQModel( model_t *mod, const void *buffer, int filesize,
 		}
 	}
 
+	u8vec4_t *weights = nullptr;
+
 	// copy vertexarrays and indexes
 	vertexarray = static_cast<iqmVertexArray_t*>( IQMPtr( header, header->ofs_vertexarrays ) );
 	for(unsigned i = 0; i < header->num_vertexarrays; i++, vertexarray++ ) {
@@ -753,6 +750,14 @@ bool R_LoadIQModel( model_t *mod, const void *buffer, int filesize,
 		}
 	}
 
+	if ( !weights )
+	{
+		for ( unsigned j = 0; j < header->num_vertexes; j++ )
+		{
+			IQModel->blendWeights[ 4 * j + 0 ] = 255;
+		}
+	}
+
 	// copy triangles
 	triangle = static_cast<iqmTriangle_t*>( IQMPtr( header, header->ofs_triangles ) );
 	for(unsigned i = 0; i < header->num_triangles; i++, triangle++ ) {
@@ -765,38 +770,25 @@ bool R_LoadIQModel( model_t *mod, const void *buffer, int filesize,
 	if( r_vboModels->integer && glConfig2.vboVertexSkinningAvailable
 	    && IQModel->num_joints <= glConfig2.maxVertexSkinningBones ) {
 
-		if( IQModel->blendIndexes ) {
-			indexbuf = (int *)ri.Hunk_AllocateTempMemory( sizeof(int[4]) * IQModel->num_vertexes );
-			for(int i = 0; i < IQModel->num_vertexes; i++ ) {
-				indexbuf[ 4 * i + 0 ] = IQModel->blendIndexes[ 4 * i + 0 ];
-				indexbuf[ 4 * i + 1 ] = IQModel->blendIndexes[ 4 * i + 1 ];
-				indexbuf[ 4 * i + 2 ] = IQModel->blendIndexes[ 4 * i + 2 ];
-				indexbuf[ 4 * i + 3 ] = IQModel->blendIndexes[ 4 * i + 3 ];
-			}
-		} else {
-			indexbuf = nullptr;
+		int *indexbuf = (int *)ri.Hunk_AllocateTempMemory( sizeof(int[4]) * IQModel->num_vertexes );
+		for(int i = 0; i < IQModel->num_vertexes; i++ ) {
+			indexbuf[ 4 * i + 0 ] = IQModel->blendIndexes[ 4 * i + 0 ];
+			indexbuf[ 4 * i + 1 ] = IQModel->blendIndexes[ 4 * i + 1 ];
+			indexbuf[ 4 * i + 2 ] = IQModel->blendIndexes[ 4 * i + 2 ];
+			indexbuf[ 4 * i + 3 ] = IQModel->blendIndexes[ 4 * i + 3 ];
 		}
-		if( IQModel->blendWeights ) {
-			const float weightscale = 1.0f / 255.0f;
 
-			weightbuf = (float *)ri.Hunk_AllocateTempMemory( sizeof(vec4_t) * IQModel->num_vertexes );
-			for(int i = 0; i < IQModel->num_vertexes; i++ ) {
-				if( IQModel->blendWeights[ 4 * i + 0 ] == 0 &&
-				    IQModel->blendWeights[ 4 * i + 1 ] == 0 &&
-				    IQModel->blendWeights[ 4 * i + 2 ] == 0 &&
-				    IQModel->blendWeights[ 4 * i + 3 ] == 0 )
-					IQModel->blendWeights[ 4 * i + 0 ] = 255;
-
-				weightbuf[ 4 * i + 0 ] = weightscale * IQModel->blendWeights[ 4 * i + 0 ];
-				weightbuf[ 4 * i + 1 ] = weightscale * IQModel->blendWeights[ 4 * i + 1 ];
-				weightbuf[ 4 * i + 2 ] = weightscale * IQModel->blendWeights[ 4 * i + 2 ];
-				weightbuf[ 4 * i + 3 ] = weightscale * IQModel->blendWeights[ 4 * i + 3 ];
-			}
-		} else {
-			weightbuf = nullptr;
+		const float weightscale = 1.0f / 255.0f;
+		float *weightbuf = (float *)ri.Hunk_AllocateTempMemory( sizeof(vec4_t) * IQModel->num_vertexes );
+		for(int i = 0; i < IQModel->num_vertexes; i++ ) {
+			weightbuf[ 4 * i + 0 ] = weightscale * IQModel->blendWeights[ 4 * i + 0 ];
+			weightbuf[ 4 * i + 1 ] = weightscale * IQModel->blendWeights[ 4 * i + 1 ];
+			weightbuf[ 4 * i + 2 ] = weightscale * IQModel->blendWeights[ 4 * i + 2 ];
+			weightbuf[ 4 * i + 3 ] = weightscale * IQModel->blendWeights[ 4 * i + 3 ];
 		}
 		
-		qtangentbuf = static_cast<i16vec4_t *>( ri.Hunk_AllocateTempMemory( sizeof( i16vec4_t ) * IQModel->num_vertexes ) );
+		i16vec4_t *qtangentbuf = static_cast<i16vec4_t *>(
+			ri.Hunk_AllocateTempMemory( sizeof( i16vec4_t ) * IQModel->num_vertexes ) );
 
 		for(int i = 0; i < IQModel->num_vertexes; i++ ) {
 			R_TBNtoQtangents( &IQModel->tangents[ 3 * i ],
@@ -805,14 +797,13 @@ bool R_LoadIQModel( model_t *mod, const void *buffer, int filesize,
 					  qtangentbuf[ i ] );
 		}
 
-		memset( &vboData, 0, sizeof( vboData ) );
+		vboData_t vboData{};
 
 		vboData.xyz = (vec3_t *)IQModel->positions;
 		vboData.qtangent = qtangentbuf;
 		vboData.numFrames = 0;
 		vboData.color = (u8vec4_t *)IQModel->colors;
 		vboData.st = (f16vec2_t *)IQModel->texcoords;
-		vboData.noLightCoords = true;
 		vboData.boneIndexes = (int (*)[4])indexbuf;
 		vboData.boneWeights = (vec4_t *)weightbuf;
 		vboData.numVerts = IQModel->num_vertexes;
@@ -820,31 +811,15 @@ bool R_LoadIQModel( model_t *mod, const void *buffer, int filesize,
 		vbo = R_CreateStaticVBO( "IQM surface VBO", vboData,
 					 vboLayout_t::VBO_LAYOUT_SKELETAL );
 
-		if( qtangentbuf ) {
-			ri.Hunk_FreeTempMemory( qtangentbuf );
-		}
-		if( weightbuf ) {
-			ri.Hunk_FreeTempMemory( weightbuf );
-		}
-		if( indexbuf ) {
-			ri.Hunk_FreeTempMemory( indexbuf );
-		}
+		ri.Hunk_FreeTempMemory( qtangentbuf );
+		ri.Hunk_FreeTempMemory( weightbuf );
+		ri.Hunk_FreeTempMemory( indexbuf );
 
 		// create IBO
 		ibo = R_CreateStaticIBO( "IQM surface IBO", ( glIndex_t* )IQModel->triangles, IQModel->num_triangles * 3 );
 	} else {
 		vbo = nullptr;
 		ibo = nullptr;
-
-		if( IQModel->blendWeights ) {
-			for( int i = 0; i < IQModel->num_vertexes; i++ ) {
-				if( IQModel->blendWeights[ 4 * i + 0 ] == 0 &&
-				    IQModel->blendWeights[ 4 * i + 1 ] == 0 &&
-				    IQModel->blendWeights[ 4 * i + 2 ] == 0 &&
-				    IQModel->blendWeights[ 4 * i + 3 ] == 0 )
-					IQModel->blendWeights[ 4 * i + 0 ] = 255;
-			}
-		}
 	}
 
 	// register shaders

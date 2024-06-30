@@ -374,21 +374,18 @@ static std::string BuildDeformSteps( deformStage_t *deforms, int numDeforms )
 	return steps;
 }
 
-
-static void addExtension( std::string &str, int enabled, int minGlslVersion,
-			  int supported, const char *name ) {
-	if( !enabled ) {
-		// extension disabled by user
-	} else if( glConfig2.shadingLanguageVersion >= minGlslVersion ) {
-		// the extension is available in the core language
-		str += Str::Format( "#define HAVE_%s 1\n", name );
-	} else if( supported ) {
-		// extension has to be explicitly enabled
-		str += Str::Format( "#extension GL_%s : require\n", name );
-		str += Str::Format( "#define HAVE_%s 1\n", name );
-	} else {
-		// extension is not supported
+static void addExtension( std::string &str, bool available, int minGlslVersion, const std::string &name ) {
+	if ( !available )
+	{
+		return;
 	}
+
+	if( glConfig2.shadingLanguageVersion < minGlslVersion )
+	{
+		str += Str::Format( "#extension GL_%s : require\n", name );
+	}
+
+	str += Str::Format( "#define HAVE_%s 1\n", name );
 }
 
 static void AddConst( std::string& str, const std::string& name, int value )
@@ -413,14 +410,53 @@ static std::string GenVersionDeclaration() {
 				       glConfig2.shadingLanguageVersion >= 150 ? (glConfig2.glCoreProfile ? "core" : "compatibility") : "");
 
 	// add supported GLSL extensions
-	addExtension( str, glConfig2.textureGatherAvailable, 400,
-		      GLEW_ARB_texture_gather, "ARB_texture_gather" );
-	addExtension( str, r_ext_gpu_shader4->integer, 130,
-		      GLEW_EXT_gpu_shader4, "EXT_gpu_shader4" );
-	addExtension( str, r_arb_gpu_shader5->integer, 400,
-		      GLEW_ARB_gpu_shader5, "ARB_gpu_shader5" );
-	addExtension( str, r_arb_uniform_buffer_object->integer, 140,
-		      GLEW_ARB_uniform_buffer_object, "ARB_uniform_buffer_object" );
+	struct extension_t {
+		bool available;
+		int minGlslVersion;
+		std::string name;
+	};
+
+	const std::vector<extension_t> extensions = {
+		{ glConfig2.gpuShader4Available, 130, "EXT_gpu_shader4" },
+		{ glConfig2.gpuShader5Available, 400, "ARB_gpu_shader5" },
+		{ glConfig2.textureGatherAvailable, 400, "ARB_texture_gather" },
+		{ glConfig2.textureIntegerAvailable, 0, "EXT_texture_integer" },
+		{ glConfig2.textureRGAvailable, 0, "ARB_texture_rg" },
+		{ glConfig2.uniformBufferObjectAvailable, 140, "ARB_uniform_buffer_object" },
+	};
+
+	for ( const auto& extension : extensions )
+	{
+		addExtension( str, extension.available, extension.minGlslVersion, extension.name );
+	}
+
+	return str;
+}
+
+static std::string GenComputeVersionDeclaration() {
+	// Compute version declaration, this has to be separate from other shader stages,
+	// because some things are unique to vertex/fragment or compute shaders
+	std::string str = Str::Format( "#version %d %s\n",
+		glConfig2.shadingLanguageVersion,
+		glConfig2.shadingLanguageVersion >= 150 ? ( glConfig2.glCoreProfile ? "core" : "compatibility" ) : "" );
+
+	// add supported GLSL extensions
+	struct extension_t {
+		bool available;
+		int minGlslVersion;
+		std::string name;
+	};
+
+	const std::vector<extension_t> extensions = {
+		{ glConfig2.computeShaderAvailable, 430, "ARB_compute_shader" },
+		{ glConfig2.gpuShader4Available, 130, "EXT_gpu_shader4" },
+		{ glConfig2.gpuShader5Available, 400, "ARB_gpu_shader5" },
+		{ glConfig2.uniformBufferObjectAvailable, 140, "ARB_uniform_buffer_object" },
+	};
+
+	for ( const auto& extension : extensions ) {
+		addExtension( str, extension.available, extension.minGlslVersion, extension.name );
+	}
 
 	return str;
 }
@@ -570,9 +606,15 @@ static std::string GenEngineConstants() {
 			AddDefine( str, "r_showParallelShadowSplits", 1 );
 	}
 
+	if ( r_highPrecisionRendering.Get() )
+	{
+		AddDefine( str, "r_highPrecisionRendering", 1 );
+	}
+
 	if ( glConfig2.dynamicLight )
 	{
 		AddDefine( str, "r_dynamicLight", 1 );
+		AddDefine( str, "r_dynamicLightRenderer", r_dynamicLightRenderer.Get() );
 	}
 
 	if ( r_precomputedLighting->integer )
@@ -660,6 +702,7 @@ void GLShaderManager::InitDriverInfo()
 
 void GLShaderManager::GenerateBuiltinHeaders() {
 	GLVersionDeclaration = GLHeader("GLVersionDeclaration", GenVersionDeclaration(), this);
+	GLComputeVersionDeclaration = GLHeader( "GLComputeVersionDeclaration", GenComputeVersionDeclaration(), this );
 	GLCompatHeader = GLHeader("GLCompatHeader", GenCompatHeader(), this);
 	GLVertexHeader = GLHeader("GLVertexHeader", GenVertexHeader(), this);
 	GLFragmentHeader = GLHeader("GLFragmentHeader", GenFragmentHeader(), this);
@@ -722,10 +765,19 @@ std::string     GLShaderManager::BuildGPUShaderText( Str::StringRef mainShaderNa
 			break;
 		}
 
-		if ( shaderType == GL_VERTEX_SHADER )
-			Com_sprintf( filename, sizeof( filename ), "glsl/%s_vp.glsl", token );
-		else
-			Com_sprintf( filename, sizeof( filename ), "glsl/%s_fp.glsl", token );
+		switch ( shaderType ) {
+			case GL_VERTEX_SHADER:
+				Com_sprintf( filename, sizeof( filename ), "glsl/%s_vp.glsl", token );
+				break;
+			case GL_FRAGMENT_SHADER:
+				Com_sprintf( filename, sizeof( filename ), "glsl/%s_fp.glsl", token );
+				break;
+			case GL_COMPUTE_SHADER:
+				Com_sprintf( filename, sizeof( filename ), "glsl/%s_cp.glsl", token );
+				break;
+			default:
+				break;
+		}
 
 		libs += GetShaderText(filename);
 		// We added a lot of stuff but if we do something bad
@@ -735,22 +787,22 @@ std::string     GLShaderManager::BuildGPUShaderText( Str::StringRef mainShaderNa
 	}
 
 	// load main() program
-	if ( shaderType == GL_VERTEX_SHADER )
-		Com_sprintf( filename, sizeof( filename ), "glsl/%s_vp.glsl", mainShaderName.c_str() );
-	else
-		Com_sprintf( filename, sizeof( filename ), "glsl/%s_fp.glsl", mainShaderName.c_str() );
+	switch ( shaderType ) {
+		case GL_VERTEX_SHADER:
+			Com_sprintf( filename, sizeof( filename ), "glsl/%s_vp.glsl", mainShaderName.c_str() );
+			break;
+		case GL_FRAGMENT_SHADER:
+			Com_sprintf( filename, sizeof( filename ), "glsl/%s_fp.glsl", mainShaderName.c_str() );
+			break;
+		case GL_COMPUTE_SHADER:
+			Com_sprintf( filename, sizeof( filename ), "glsl/%s_cp.glsl", mainShaderName.c_str() );
+			break;
+		default:
+			break;
+	}
 
 	std::string env;
 	env.reserve( 1024 ); // Might help, just an estimate.
-
-	if ( glConfig2.textureRGAvailable )
-		AddDefine( env, "TEXTURE_RG", 1 );
-
-	if ( glConfig2.uniformBufferObjectAvailable )
-		AddDefine( env, "UNIFORM_BUFFER_OBJECT", 1 );
-
-	if ( glConfig2.textureIntegerAvailable )
-		AddDefine( env, "TEXTURE_INTEGER", 1 );
 
 	AddDefine( env, "r_AmbientScale", r_ambientScale->value );
 	AddDefine( env, "r_SpecularScale", r_specularScale->value );
@@ -770,9 +822,42 @@ std::string     GLShaderManager::BuildGPUShaderText( Str::StringRef mainShaderNa
 	// so we have to reset the line counting.
 	env += "#line 0\n";
 
-	std::string shaderText = env + libs + GetShaderText(filename);
+	std::string shaderText = env + libs + GetShaderText( filename );
 
-	return shaderText;
+	std::istringstream shaderTextStream( shaderText );
+	std::string shaderMain;
+
+	std::string line;
+
+	while ( std::getline( shaderTextStream, line, '\n' ) ) {
+		const std::string::size_type position = line.find( "#insert" );
+		if ( position == std::string::npos ) {
+			shaderMain += line + "\n";
+			continue;
+		}
+
+		if ( line.find_first_not_of( " \t" ) != position ) {
+			shaderMain += line + "\n";
+			continue;
+		}
+
+		std::string shaderInsertPath = line.substr( position + 8, std::string::npos );
+		switch ( shaderType ) {
+			case GL_VERTEX_SHADER:
+				shaderMain += GetShaderText( "glsl/" + shaderInsertPath + ".glsl" );
+				break;
+			case GL_FRAGMENT_SHADER:
+				shaderMain += GetShaderText( "glsl/" + shaderInsertPath + ".glsl" );
+				break;
+			case GL_COMPUTE_SHADER:
+				shaderMain += GetShaderText( "glsl/" + shaderInsertPath + ".glsl" );
+				break;
+			default:
+				break;
+		}
+	}
+
+	return shaderMain;
 }
 
 static bool IsUnusedPermutation( const char *compileMacros )
@@ -846,13 +931,17 @@ void GLShaderManager::buildPermutation( GLShader *shader, int macroIndex, int de
 		if( deformIndex > 0 )
 		{
 			shaderProgram_t *baseShader = &shader->_shaderPrograms[ macroIndex ];
-			if( !baseShader->VS || !baseShader->FS )
+			if( ( !baseShader->VS && shader->_hasVertexShader ) || ( !baseShader->FS && shader->_hasFragmentShader ) )
 				CompileGPUShaders( shader, baseShader, compileMacros );
 
 			shaderProgram->program = glCreateProgram();
-			glAttachShader( shaderProgram->program, baseShader->VS );
-			glAttachShader( shaderProgram->program, _deformShaders[ deformIndex ] );
-			glAttachShader( shaderProgram->program, baseShader->FS );
+			if ( shader->_hasVertexShader ) {
+				glAttachShader( shaderProgram->program, baseShader->VS );
+				glAttachShader( shaderProgram->program, _deformShaders[deformIndex] );
+			}
+			if ( shader->_hasFragmentShader ) {
+				glAttachShader( shaderProgram->program, baseShader->FS );
+			}
 
 			BindAttribLocations( shaderProgram->program );
 			LinkProgram( shaderProgram->program );
@@ -922,16 +1011,43 @@ void GLShaderManager::InitShader( GLShader *shader )
 	std::string fragmentInlines;
 	shader->BuildShaderFragmentLibNames( fragmentInlines );
 
-	shader->_vertexShaderText = BuildGPUShaderText( shader->GetMainShaderName(), vertexInlines, GL_VERTEX_SHADER );
-	shader->_fragmentShaderText = BuildGPUShaderText( shader->GetMainShaderName(), fragmentInlines, GL_FRAGMENT_SHADER );
-	std::string combinedShaderText =
-		GLVersionDeclaration.getText()
-		+ GLCompatHeader.getText()
-		+ GLEngineConstants.getText()
-		+ GLVertexHeader.getText()
-		+ GLFragmentHeader.getText()
-		+ shader->_vertexShaderText
-		+ shader->_fragmentShaderText;
+	std::string computeInlines;
+	shader->BuildShaderComputeLibNames( computeInlines );
+
+	if ( shader->_hasVertexShader ) {
+		shader->_vertexShaderText = BuildGPUShaderText( shader->GetMainShaderName(), vertexInlines, GL_VERTEX_SHADER );
+	}
+	if ( shader->_hasFragmentShader ) {
+		shader->_fragmentShaderText = BuildGPUShaderText( shader->GetMainShaderName(), fragmentInlines, GL_FRAGMENT_SHADER );
+	}
+	if ( shader->_hasComputeShader ) {
+		shader->_computeShaderText = BuildGPUShaderText( shader->GetMainShaderName(), computeInlines, GL_COMPUTE_SHADER );
+	}
+
+	std::string combinedShaderText;
+	if ( shader->_hasVertexShader || shader->_hasFragmentShader ) {
+		combinedShaderText =
+			GLVersionDeclaration.getText()
+			+ GLCompatHeader.getText()
+			+ GLEngineConstants.getText()
+			+ GLVertexHeader.getText()
+			+ GLFragmentHeader.getText();
+	} else if ( shader->_hasComputeShader ) {
+		combinedShaderText =
+			GLComputeVersionDeclaration.getText()
+			+ GLCompatHeader.getText()
+			+ GLEngineConstants.getText();
+	}
+
+	if ( shader->_hasVertexShader ) {
+		combinedShaderText += shader->_vertexShaderText;
+	}
+	if ( shader->_hasFragmentShader ) {
+		combinedShaderText += shader->_fragmentShaderText;
+	}
+	if ( shader->_hasComputeShader ) {
+		combinedShaderText += shader->_computeShaderText;
+	}
 
 	shader->_checkSum = Com_BlockChecksum( combinedShaderText.c_str(), combinedShaderText.length() );
 }
@@ -1109,20 +1225,34 @@ void GLShaderManager::CompileGPUShaders( GLShader *shader, shaderProgram_t *prog
 	// add them
 	std::string vertexShaderTextWithMacros = macrosString + shader->_vertexShaderText;
 	std::string fragmentShaderTextWithMacros = macrosString + shader->_fragmentShaderText;
-	program->VS = CompileShader( shader->GetName(),
-				     vertexShaderTextWithMacros,
-				     { &GLVersionDeclaration,
-				       &GLVertexHeader,
-				       &GLCompatHeader,
-				       &GLEngineConstants },
-				     GL_VERTEX_SHADER );
-	program->FS = CompileShader( shader->GetName(),
-				     fragmentShaderTextWithMacros,
-				     { &GLVersionDeclaration,
-				       &GLFragmentHeader,
-				       &GLCompatHeader,
-				       &GLEngineConstants },
-				     GL_FRAGMENT_SHADER );
+	std::string computeShaderTextWithMacros = macrosString + shader->_computeShaderText;
+	if( shader->_hasVertexShader ) {
+		program->VS = CompileShader( shader->GetName(),
+						 vertexShaderTextWithMacros,
+						 { &GLVersionDeclaration,
+						   &GLVertexHeader,
+						   &GLCompatHeader,
+						   &GLEngineConstants },
+						 GL_VERTEX_SHADER );
+	}
+	if ( shader->_hasFragmentShader ) {
+		program->FS = CompileShader( shader->GetName(),
+						 fragmentShaderTextWithMacros,
+						 { &GLVersionDeclaration,
+						   &GLFragmentHeader,
+						   &GLCompatHeader,
+						   &GLEngineConstants },
+						 GL_FRAGMENT_SHADER );
+	}
+	if ( shader->_hasComputeShader ) {
+		program->CS = CompileShader( shader->GetName(),
+						 computeShaderTextWithMacros,
+						 { &GLComputeVersionDeclaration,
+						   // &GLComputeHeader,
+						   &GLCompatHeader,
+						   &GLEngineConstants },
+						 GL_COMPUTE_SHADER );
+	}
 }
 
 void GLShaderManager::CompileAndLinkGPUShaderProgram( GLShader *shader, shaderProgram_t *program,
@@ -1131,9 +1261,16 @@ void GLShaderManager::CompileAndLinkGPUShaderProgram( GLShader *shader, shaderPr
 	GLShaderManager::CompileGPUShaders( shader, program, compileMacros );
 
 	program->program = glCreateProgram();
-	glAttachShader( program->program, program->VS );
-	glAttachShader( program->program, _deformShaders[ deformIndex ] );
-	glAttachShader( program->program, program->FS );
+	if ( shader->_hasVertexShader ) {
+		glAttachShader( program->program, program->VS );
+		glAttachShader( program->program, _deformShaders[ deformIndex ] );
+	}
+	if ( shader->_hasFragmentShader ) {
+		glAttachShader( program->program, program->FS );
+	}
+	if ( shader->_hasComputeShader ) {
+		glAttachShader( program->program, program->CS );
+	}
 
 	BindAttribLocations( program->program );
 	LinkProgram( program->program );
@@ -1178,7 +1315,16 @@ GLuint GLShaderManager::CompileShader( Str::StringRef programName,
 	{
 		PrintShaderSource( programName, shader );
 		PrintInfoLog( shader );
-		ThrowShaderError(Str::Format("Couldn't compile %s shader: %s", ( shaderType == GL_VERTEX_SHADER) ? "vertex" : "fragment", programName));
+		switch ( shaderType ) {
+			case GL_VERTEX_SHADER:
+				ThrowShaderError( Str::Format( "Couldn't compile vertex shader: %s", programName ) );
+			case GL_FRAGMENT_SHADER:
+				ThrowShaderError( Str::Format( "Couldn't compile fragment shader: %s", programName ) );
+			case GL_COMPUTE_SHADER:
+				ThrowShaderError( Str::Format( "Couldn't compile compute shader: %s", programName ) );
+			default:
+				break;
+		}
 	}
 
 	return shader;
@@ -1550,7 +1696,19 @@ void GLShader::BindProgram( int deformIndex )
 	GL_BindProgram( _currentProgram );
 }
 
-void GLShader::SetRequiredVertexPointers()
+void GLShader::DispatchCompute( const GLuint globalWorkgroupX, const GLuint globalWorkgroupY, const GLuint globalWorkgroupZ ) {
+	ASSERT_EQ( _currentProgram, glState.currentProgram );
+	ASSERT( _hasComputeShader );
+	glDispatchCompute( globalWorkgroupX, globalWorkgroupY, globalWorkgroupZ );
+}
+
+void GLShader::DispatchComputeIndirect( const GLintptr indirectBuffer ) {
+	ASSERT_EQ( _currentProgram, glState.currentProgram );
+	ASSERT( _hasComputeShader );
+	glDispatchComputeIndirect( indirectBuffer );
+}
+
+void GLShader::SetRequiredVertexPointers( bool vboVertexSprite )
 {
 	uint32_t macroVertexAttribs = 0;
 
@@ -1562,7 +1720,15 @@ void GLShader::SetRequiredVertexPointers()
 		}
 	}
 
-	GL_VertexAttribsState( ( _vertexAttribsRequired | _vertexAttribs | macroVertexAttribs ) );  // & ~_vertexAttribsUnsupported);
+	uint32_t attribs = _vertexAttribsRequired | _vertexAttribs | macroVertexAttribs; // & ~_vertexAttribsUnsupported);
+
+	if ( vboVertexSprite )
+	{
+		attribs &= ~ATTR_QTANGENT;
+		attribs |= ATTR_ORIENTATION;
+	}
+
+	GL_VertexAttribsState( attribs );
 }
 
 GLShader_generic2D::GLShader_generic2D( GLShaderManager *manager ) :
@@ -1575,8 +1741,7 @@ GLShader_generic2D::GLShader_generic2D( GLShaderManager *manager ) :
 	u_Color( this ),
 	u_DepthScale( this ),
 	GLDeformStage( this ),
-	GLCompileMacro_USE_DEPTH_FADE( this ),
-	GLCompileMacro_USE_ALPHA_TESTING( this )
+	GLCompileMacro_USE_DEPTH_FADE( this )
 {
 }
 
@@ -1603,7 +1768,6 @@ GLShader_generic::GLShader_generic( GLShaderManager *manager ) :
 	u_ViewUp( this ),
 	u_AlphaThreshold( this ),
 	u_ModelMatrix( this ),
-	u_ProjectionMatrixTranspose( this ),
 	u_ModelViewProjectionMatrix( this ),
 	u_InverseLightFactor( this ),
 	u_ColorModulate( this ),
@@ -1617,8 +1781,7 @@ GLShader_generic::GLShader_generic( GLShaderManager *manager ) :
 	GLCompileMacro_USE_VERTEX_SPRITE( this ),
 	GLCompileMacro_USE_TCGEN_ENVIRONMENT( this ),
 	GLCompileMacro_USE_TCGEN_LIGHTMAP( this ),
-	GLCompileMacro_USE_DEPTH_FADE( this ),
-	GLCompileMacro_USE_ALPHA_TESTING( this )
+	GLCompileMacro_USE_DEPTH_FADE( this )
 {
 }
 
@@ -1969,9 +2132,7 @@ GLShader_skybox::GLShader_skybox( GLShaderManager *manager ) :
 	u_ModelMatrix( this ),
 	u_ModelViewProjectionMatrix( this ),
 	u_InverseLightFactor( this ),
-	u_VertexInterpolation( this ),
-	GLDeformStage( this ),
-	GLCompileMacro_USE_ALPHA_TESTING( this )
+	GLDeformStage( this )
 {
 }
 
